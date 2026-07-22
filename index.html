@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Cash Cannon</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #07100b; overflow: hidden; }
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      #feed { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+      #cam { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; left: -10px; }
+
+      .overlay {
+        position: fixed; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 22px; text-align: center;
+        background: radial-gradient(120% 120% at 50% 30%, #0d2318 0%, #050b08 70%);
+        color: #eafff1; padding: 24px;
+      }
+      .hidden { display: none !important; }
+      .title {
+        font-size: clamp(40px, 9vw, 96px); font-weight: 800; letter-spacing: -0.03em;
+        margin: 0; background: linear-gradient(180deg, #7ef3b0, #29d67a 55%, #14663f);
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+        text-shadow: 0 2px 40px rgba(41, 214, 122, 0.25);
+      }
+      .hint { margin: 0; max-width: 30ch; opacity: 0.8; font-size: clamp(14px, 2.4vw, 18px); line-height: 1.5; }
+      .btn {
+        appearance: none; border: 0; cursor: pointer; font-weight: 700;
+        font-size: 18px; color: #05130c; padding: 16px 30px; border-radius: 999px;
+        background: linear-gradient(180deg, #6ef0a6, #23c974); box-shadow: 0 10px 30px rgba(35, 201, 116, 0.4);
+        transition: transform 0.08s ease, box-shadow 0.2s ease;
+      }
+      .btn:hover { transform: translateY(-1px); }
+      .btn:active { transform: translateY(1px) scale(0.99); }
+
+      #sound {
+        position: fixed; top: 14px; right: 14px; z-index: 5;
+        width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(6, 20, 13, 0.55); backdrop-filter: blur(8px); color: #eafff1;
+        font-size: 20px; cursor: pointer; display: none; align-items: center; justify-content: center;
+      }
+      #error .title { font-size: clamp(24px, 5vw, 40px); }
+      #errorMsg { max-width: 34ch; opacity: 0.85; line-height: 1.55; }
+    </style>
+  </head>
+  <body>
+    <canvas id="feed"></canvas>
+    <video id="cam" playsinline muted></video>
+
+    <button id="sound" title="Toggle sound" aria-label="Toggle sound">🔊</button>
+
+    <div id="start" class="overlay">
+      <h1 class="title">Cash Cannon</h1>
+      <p id="hint" class="hint">
+        Make a finger gun 👉 — thumb <b>up</b> to cock, drop it to <b>fire</b>. Point to aim.
+      </p>
+      <button id="startBtn" class="btn">Enable Camera</button>
+    </div>
+
+    <div id="error" class="overlay hidden">
+      <h1 class="title">Hold up 🤠</h1>
+      <p id="errorMsg" class="hint"></p>
+      <button id="retryBtn" class="btn">Try Again</button>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
