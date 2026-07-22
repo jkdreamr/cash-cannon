@@ -5,10 +5,11 @@ export function createHandFiringState() {
 }
 
 // hand: { isGunShape, tip, aim, thumbAngle } | null
-export function updateFiring(state, hand, nowMs, cfg = DEFAULTS) {
+export function updateFiring(state, hand, nowMs, cfg = {}) {
+  const c = { ...DEFAULTS, ...cfg };
   if (!hand || !hand.isGunShape) {
     state.lostFrames += 1;
-    if (state.lostFrames > cfg.graceFrames) {
+    if (state.lostFrames > c.graceFrames) {
       state.phase = 'NO_GUN';
       state.thumb = 'down';
     }
@@ -18,10 +19,10 @@ export function updateFiring(state, hand, nowMs, cfg = DEFAULTS) {
 
   // Debounced thumb position (hysteresis) + edge detection.
   let thumbEvent = null;
-  if (state.thumb === 'down' && hand.thumbAngle >= cfg.thumbUpDeg) {
+  if (state.thumb === 'down' && hand.thumbAngle >= c.thumbUpDeg) {
     state.thumb = 'up';
     thumbEvent = 'toUp';
-  } else if (state.thumb === 'up' && hand.thumbAngle <= cfg.thumbDownDeg) {
+  } else if (state.thumb === 'up' && hand.thumbAngle <= c.thumbDownDeg) {
     state.thumb = 'down';
     thumbEvent = 'toDown';
   }
@@ -36,7 +37,7 @@ export function updateFiring(state, hand, nowMs, cfg = DEFAULTS) {
       break;
     case 'COCKED':
       if (thumbEvent === 'toDown') {
-        if (nowMs - state.lastFireMs >= cfg.cooldownMs) {
+        if (nowMs - state.lastFireMs >= c.cooldownMs) {
           didFire = true;
           state.lastFireMs = nowMs;
         }

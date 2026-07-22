@@ -45,6 +45,17 @@ describe('updateFiring', () => {
     expect(updateFiring(s, GUN(DOWN), (now += 200)).didFire).toBe(true);
     updateFiring(s, GUN(UP), (now += 10));    // re-cock fast
     expect(updateFiring(s, GUN(DOWN), (now += 10)).didFire).toBe(false); // within 120ms
+    expect(s.phase).toBe('FIRED');
+  });
+
+  test('form with thumb down, then cock, then drop fires', () => {
+    const s = createHandFiringState();
+    let now = 0;
+    updateFiring(s, GUN(DOWN), (now += 16)); // gun forms, thumb down -> GUN_IDLE
+    expect(s.phase).toBe('GUN_IDLE');
+    updateFiring(s, GUN(UP), (now += 16));   // cock -> COCKED
+    expect(s.phase).toBe('COCKED');
+    expect(updateFiring(s, GUN(DOWN), (now += 200)).didFire).toBe(true);
   });
 
   test('losing the gun beyond grace resets to NO_GUN', () => {
