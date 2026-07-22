@@ -25,7 +25,7 @@ export function spawnBurst(sys, { tip, aim, nowMs = 0, rng = Math.random }) {
   const billCount = 3 + Math.floor(rng() * 4); // 3..6
   for (let i = 0; i < billCount; i++) {
     const spreadDeg = (rng() - 0.5) * 24;   // +/- 12 deg cone
-    const recoilDeg = 8 + rng() * 6;        // bias toward recoil kick (downward +y)
+    const recoilDeg = -8 - rng() * 6;       // recoil kick biases the shot upward (screen -y)
     const dir = rotate(aim, spreadDeg + recoilDeg);
     const speed = 900 + rng() * 500;         // 900..1400 px/s
     sys.particles.push({

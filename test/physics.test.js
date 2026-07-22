@@ -20,15 +20,20 @@ describe('physics', () => {
     expect(count(sys2, 'bill')).toBe(6);
   });
 
-  test('gravity increases downward velocity and y', () => {
+  test('gravity accelerates a particle downward', () => {
     const sys = createSystem();
-    spawnBurst(sys, { tip: TIP, aim: AIM, rng: () => 0.5 });
-    const bill = sys.particles.find((p) => p.kind === 'bill');
-    const y0 = bill.y;
-    const vy0 = bill.vy;
+    sys.particles.push({ kind: 'bill', x: 0, y: 0, vx: 0, vy: 0, rot: 0, vrot: 0, flip: 0, vflip: 0, life: 5, maxLife: 5 });
+    const bill = sys.particles[0];
     step(sys, 0.1, BOUNDS);
-    expect(bill.vy).toBeGreaterThan(vy0);
-    expect(bill.y).toBeGreaterThan(y0);
+    expect(bill.vy).toBeGreaterThan(0); // gained downward velocity from gravity
+    expect(bill.y).toBeGreaterThan(0);  // moved downward
+  });
+
+  test('bills launch with an upward recoil bias (muzzle climb)', () => {
+    const sys = createSystem();
+    spawnBurst(sys, { tip: TIP, aim: { x: 1, y: 0 }, rng: () => 0.5 });
+    const bill = sys.particles.find((p) => p.kind === 'bill');
+    expect(bill.vy).toBeLessThan(0); // recoil kicks the shot toward screen-up (-y)
   });
 
   test('drag reduces horizontal speed magnitude', () => {
