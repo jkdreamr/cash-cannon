@@ -27,6 +27,8 @@ let running = false;
 let lastVideoTime = -1;
 let lastTs = 0;
 let shakeMag = 0;
+let lastChaChingMs = 0; // throttle the cash-register bells during continuous fire
+let fireCount = 0;      // used to eject a shell casing every few shots
 const shake = { x: 0, y: 0 };
 
 function showError(msg) {
@@ -50,11 +52,17 @@ async function loadModel() {
     baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
     runningMode: 'VIDEO',
     numHands: 2,
+    // Lenient thresholds so hands are picked up readily, including hard poses
+    // like the barrel pointing toward the camera. The gesture classifier still
+    // gates what actually fires.
+    minHandDetectionConfidence: 0.3,
+    minHandPresenceConfidence: 0.3,
+    minTrackingConfidence: 0.3,
   };
   try {
     return await HandLandmarker.createFromOptions(fileset, opts);
   } catch (e) {
-    // Some machines/browsers lack a usable GPU delegate — fall back to CPU.
+    // Some machines/browsers lack a usable GPU delegate - fall back to CPU.
     opts.baseOptions.delegate = 'CPU';
     return await HandLandmarker.createFromOptions(fileset, opts);
   }
@@ -123,11 +131,13 @@ function loop(ts) {
 
   // Detect only when the video advanced to a new frame.
   let hands = [];
+  let worldHands = [];
   let labels = [];
   if (video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
     const res = landmarker.detectForVideo(video, ts);
     hands = res.landmarks || [];
+    worldHands = res.worldLandmarks || [];
     const handed = res.handednesses || res.handedness || [];
     labels = hands.map((_, i) => handed[i]?.[0]?.categoryName || `h${i}`);
   }
@@ -138,23 +148,37 @@ function loop(ts) {
   for (let i = 0; i < hands.length; i++) {
     const label = labels[i];
     seen.add(label);
-    // Map to mirrored pixel space so aim + particles match the selfie view.
+    // Positions and aim come from mirrored 2D pixel space (selfie view); the
+    // finger shape is judged from 3D world landmarks so it survives the barrel
+    // pointing toward or away from the camera.
     const lmPix = hands[i].map((pt) => ({ x: (1 - pt.x) * w, y: pt.y * h }));
-    const hand = classifyHand(lmPix);
+    const shapeLm = worldHands[i] || hands[i];
+    const hand = classifyHand(lmPix, shapeLm);
 
     if (!firingStates.has(label)) firingStates.set(label, createHandFiringState());
     const state = firingStates.get(label);
-    const before = state.phase;
     const r = updateFiring(state, hand, ts);
 
     if (r.didFire) {
-      spawnBurst(system, { tip: hand.tip, aim: hand.aim, nowMs: ts });
-      audio.fire();
-      shakeMag = 7;
+      let aim = hand.aim;
+      if ((hand.aimMag || 0) < 0.05 * h) {
+        // Barrel points at/away from the camera: spray cash outward in all
+        // directions so it still reads as bursting toward the screen.
+        const a = Math.random() * Math.PI * 2;
+        aim = { x: Math.cos(a), y: Math.sin(a) };
+      }
+      const shell = fireCount % 4 === 0; // eject a casing every few shots
+      fireCount += 1;
+      spawnBurst(system, { tip: hand.tip, aim, nowMs: ts, bills: 2, shell });
+      audio.shot();
+      if (ts - lastChaChingMs > 380) {
+        audio.chaChing();
+        lastChaChingMs = ts;
+      }
+      shakeMag = 4; // gentle continuous rumble, not a per-shot kick
     }
-    if (state.phase === 'COCKED' && before !== 'COCKED') audio.cock();
 
-    if (hand.isGunShape) status.push({ cocked: state.phase === 'COCKED' });
+    if (hand.isGunShape) status.push({ cocked: r.firing });
   }
 
   // Advance grace timers for hands that vanished this frame.
@@ -176,7 +200,9 @@ function loop(ts) {
 el('startBtn').addEventListener('click', start);
 el('retryBtn').addEventListener('click', start);
 soundBtn.addEventListener('click', () => {
-  const next = !audio.isEnabled();
-  audio.setEnabled(next);
-  soundBtn.textContent = next ? '🔊' : '🔇';
+  const on = !audio.isEnabled();
+  audio.setEnabled(on);
+  soundBtn.classList.toggle('muted', !on);
+  soundBtn.setAttribute('aria-pressed', String(on));
+  soundBtn.setAttribute('aria-label', on ? 'Mute sound' : 'Unmute sound');
 });

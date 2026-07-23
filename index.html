@@ -5,64 +5,209 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Cash Cannon</title>
     <style>
-      :root { color-scheme: dark; }
+      :root {
+        color-scheme: dark;
+        --bg-0: #04120b;
+        --bg-1: #0a2417;
+        --ink: #eafff1;
+        --ink-soft: rgba(234, 255, 241, 0.62);
+        --green: #34d17e;
+        --green-deep: #0f5a37;
+        --gold: #f2d98a;
+        --gold-deep: #b8912f;
+        --seal: #d9b24a;
+      }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; background: #07100b; overflow: hidden; }
-      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      html, body { margin: 0; height: 100%; background: var(--bg-0); overflow: hidden; }
+      body {
+        font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        color: var(--ink);
+      }
+
       #feed { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
       #cam { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; left: -10px; }
 
+      /* ---------- Overlays ---------- */
       .overlay {
-        position: fixed; inset: 0; display: flex; flex-direction: column;
-        align-items: center; justify-content: center; gap: 22px; text-align: center;
-        background: radial-gradient(120% 120% at 50% 30%, #0d2318 0%, #050b08 70%);
-        color: #eafff1; padding: 24px;
+        position: fixed; inset: 0; z-index: 3;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        text-align: center; padding: 7vmin 24px;
+        background:
+          radial-gradient(120% 90% at 50% 8%, rgba(52, 209, 126, 0.10), transparent 55%),
+          radial-gradient(140% 120% at 50% 120%, #06180e 0%, #030c07 70%);
       }
       .hidden { display: none !important; }
-      .title {
-        font-size: clamp(40px, 9vw, 96px); font-weight: 800; letter-spacing: -0.03em;
-        margin: 0; background: linear-gradient(180deg, #7ef3b0, #29d67a 55%, #14663f);
-        -webkit-background-clip: text; background-clip: text; color: transparent;
-        text-shadow: 0 2px 40px rgba(41, 214, 122, 0.25);
-      }
-      .hint { margin: 0; max-width: 30ch; opacity: 0.8; font-size: clamp(14px, 2.4vw, 18px); line-height: 1.5; }
-      .btn {
-        appearance: none; border: 0; cursor: pointer; font-weight: 700;
-        font-size: 18px; color: #05130c; padding: 16px 30px; border-radius: 999px;
-        background: linear-gradient(180deg, #6ef0a6, #23c974); box-shadow: 0 10px 30px rgba(35, 201, 116, 0.4);
-        transition: transform 0.08s ease, box-shadow 0.2s ease;
-      }
-      .btn:hover { transform: translateY(-1px); }
-      .btn:active { transform: translateY(1px) scale(0.99); }
 
-      #sound {
-        position: fixed; top: 14px; right: 14px; z-index: 5;
-        width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.18);
-        background: rgba(6, 20, 13, 0.55); backdrop-filter: blur(8px); color: #eafff1;
-        font-size: 20px; cursor: pointer; display: none; align-items: center; justify-content: center;
+      /* Layered atmosphere */
+      .grain {
+        position: absolute; inset: 0; pointer-events: none; opacity: 0.06; mix-blend-mode: screen;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
       }
-      #error .title { font-size: clamp(24px, 5vw, 40px); }
-      #errorMsg { max-width: 34ch; opacity: 0.85; line-height: 1.55; }
+      .guilloche {
+        position: absolute; inset: -20%; pointer-events: none; opacity: 0.05;
+        background:
+          repeating-radial-gradient(circle at 50% 42%, transparent 0 15px, rgba(242, 217, 138, 0.5) 15px 16px);
+        mask-image: radial-gradient(60% 50% at 50% 42%, #000 0%, transparent 72%);
+        -webkit-mask-image: radial-gradient(60% 50% at 50% 42%, #000 0%, transparent 72%);
+      }
+      .glow {
+        position: absolute; width: 78vmin; height: 78vmin; top: 34%; left: 50%;
+        transform: translate(-50%, -50%); pointer-events: none;
+        background: radial-gradient(circle, rgba(52, 209, 126, 0.28), rgba(52, 209, 126, 0) 62%);
+        filter: blur(6px); animation: breathe 7s ease-in-out infinite;
+      }
+      @keyframes breathe {
+        0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
+        50%      { opacity: 0.9; transform: translate(-50%, -50%) scale(1.09); }
+      }
+
+      .stack { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; max-width: 720px; }
+
+      /* Ornamental kicker */
+      .kicker {
+        display: flex; align-items: center; gap: 14px;
+        font-size: clamp(10px, 1.5vw, 12px); letter-spacing: 0.42em; text-transform: uppercase;
+        color: var(--gold); font-weight: 600; margin: 0 0 20px; padding-left: 0.42em;
+      }
+      .kicker::before, .kicker::after {
+        content: ""; width: clamp(26px, 8vw, 60px); height: 1px;
+        background: linear-gradient(90deg, transparent, var(--gold-deep), var(--gold));
+      }
+      .kicker::after { background: linear-gradient(90deg, var(--gold), var(--gold-deep), transparent); }
+
+      /* Wordmark: engraved banknote serif with a moving foil sheen */
+      .wordmark {
+        font-family: "Hoefler Text", "Didot", "Playfair Display", Georgia, "Times New Roman", serif;
+        font-weight: 700; letter-spacing: -0.015em; line-height: 0.94;
+        font-size: clamp(58px, 15vw, 168px); margin: 0;
+        background-image: linear-gradient(
+          100deg,
+          var(--gold-deep) 0%, var(--gold) 16%, #fffae6 27%, var(--gold) 38%,
+          var(--green) 60%, #bff0d2 74%, var(--green) 86%, var(--gold-deep) 100%
+        );
+        background-size: 220% 100%;
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+        -webkit-text-fill-color: transparent;
+        filter: drop-shadow(0 6px 34px rgba(52, 209, 126, 0.28));
+        animation: sheen 6.5s ease-in-out infinite;
+      }
+      @keyframes sheen {
+        0%, 100% { background-position: 0% 50%; }
+        50%      { background-position: 100% 50%; }
+      }
+
+      /* Double hairline rule, like a note border */
+      .rule {
+        width: min(360px, 68%); height: 0; margin: 26px 0 22px;
+        border-top: 1px solid rgba(242, 217, 138, 0.55);
+        border-bottom: 1px solid rgba(242, 217, 138, 0.16);
+        padding-top: 3px; position: relative;
+      }
+      .rule::after {
+        content: "$"; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background: var(--bg-0); color: var(--seal); padding: 0 12px;
+        font-family: "Hoefler Text", Georgia, serif; font-size: 15px;
+      }
+
+      .hint { margin: 0; max-width: 34ch; color: var(--ink); opacity: 0.9;
+        font-size: clamp(15px, 2.4vw, 19px); line-height: 1.55; }
+      .hint b { color: var(--gold); font-weight: 600; }
+
+      /* Primary CTA: foil pill */
+      .btn {
+        margin-top: 34px; appearance: none; border: 0; cursor: pointer;
+        font: inherit; font-weight: 700; font-size: 17px; letter-spacing: 0.01em;
+        color: #06180e; min-height: 56px; padding: 0 34px; border-radius: 999px;
+        background: linear-gradient(180deg, #8ff2b5 0%, var(--green) 52%, #1f9e5e 100%);
+        box-shadow:
+          0 1px 0 rgba(255, 255, 255, 0.5) inset,
+          0 14px 34px rgba(52, 209, 126, 0.38),
+          0 0 0 1px rgba(242, 217, 138, 0.35);
+        transition: transform 0.14s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.2s ease, filter 0.2s ease;
+      }
+      .btn:hover { transform: translateY(-2px); filter: brightness(1.05);
+        box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 20px 46px rgba(52,209,126,0.5), 0 0 0 1px rgba(242,217,138,0.6); }
+      .btn:active { transform: translateY(0) scale(0.985); }
+      .btn:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+
+      .tip { margin: 20px 0 0; font-size: 13px; color: var(--ink-soft); letter-spacing: 0.01em; }
+
+      /* ---------- Sound toggle (SVG, not emoji) ---------- */
+      #sound {
+        position: fixed; top: 16px; right: 16px; z-index: 5;
+        width: 46px; height: 46px; border-radius: 50%; cursor: pointer;
+        display: none; align-items: center; justify-content: center;
+        color: var(--ink); border: 1px solid rgba(242, 217, 138, 0.28);
+        background: rgba(6, 22, 13, 0.5); backdrop-filter: blur(9px);
+        transition: transform 0.14s ease, border-color 0.2s ease, background 0.2s ease;
+      }
+      #sound:hover { transform: scale(1.06); border-color: rgba(242, 217, 138, 0.6); background: rgba(10, 36, 23, 0.6); }
+      #sound:focus-visible { outline: 3px solid var(--gold); outline-offset: 3px; }
+      #sound .ic { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      #sound .ic-off { display: none; }
+      #sound.muted { color: var(--ink-soft); }
+      #sound.muted .ic-on { display: none; }
+      #sound.muted .ic-off { display: block; }
+
+      /* ---------- Error overlay ---------- */
+      #error .wordmark { font-size: clamp(38px, 8vw, 76px); }
+      #errorMsg { max-width: 36ch; color: var(--ink); opacity: 0.9; line-height: 1.6;
+        font-size: clamp(15px, 2.3vw, 18px); }
+
+      /* ---------- Entrance choreography ---------- */
+      .reveal { opacity: 0; transform: translateY(16px); animation: rise 0.75s cubic-bezier(0.2, 0.7, 0.2, 1) forwards; }
+      .d1 { animation-delay: 0.04s; } .d2 { animation-delay: 0.12s; }
+      .d3 { animation-delay: 0.22s; } .d4 { animation-delay: 0.32s; } .d5 { animation-delay: 0.42s; }
+      @keyframes rise { to { opacity: 1; transform: none; } }
+
+      @media (prefers-reduced-motion: reduce) {
+        .reveal { opacity: 1; transform: none; animation: none; }
+        .wordmark, .glow { animation: none; }
+      }
     </style>
   </head>
   <body>
     <canvas id="feed"></canvas>
     <video id="cam" playsinline muted></video>
 
-    <button id="sound" title="Toggle sound" aria-label="Toggle sound">🔊</button>
+    <button id="sound" type="button" aria-label="Mute sound" aria-pressed="true" title="Sound">
+      <svg class="ic ic-on" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor" stroke="none" />
+        <path d="M15.4 8.6a5 5 0 0 1 0 6.8" />
+        <path d="M18.3 5.7a9 9 0 0 1 0 12.6" />
+      </svg>
+      <svg class="ic ic-off" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor" stroke="none" />
+        <path d="m16 9 5 6" />
+        <path d="m21 9-5 6" />
+      </svg>
+    </button>
 
     <div id="start" class="overlay">
-      <h1 class="title">Cash Cannon</h1>
-      <p id="hint" class="hint">
-        Make a finger gun 👉 — thumb <b>up</b> to cock, drop it to <b>fire</b>. Point to aim.
-      </p>
-      <button id="startBtn" class="btn">Enable Camera</button>
+      <div class="grain"></div>
+      <div class="guilloche"></div>
+      <div class="glow"></div>
+      <div class="stack">
+        <p class="kicker reveal d1">Webcam Money Cannon</p>
+        <h1 class="wordmark reveal d2">Cash&nbsp;Cannon</h1>
+        <div class="rule reveal d3"></div>
+        <p id="hint" class="hint reveal d3">
+          Make a finger gun and <b>hold the shape</b>. Cash streams out of your fingertip. Point to aim.
+        </p>
+        <button id="startBtn" class="btn reveal d4" type="button">Enable Camera</button>
+        <p class="tip reveal d5">Best in good light with a plain background behind your hand.</p>
+      </div>
     </div>
 
     <div id="error" class="overlay hidden">
-      <h1 class="title">Hold up 🤠</h1>
-      <p id="errorMsg" class="hint"></p>
-      <button id="retryBtn" class="btn">Try Again</button>
+      <div class="grain"></div>
+      <div class="glow"></div>
+      <div class="stack">
+        <h1 class="wordmark">Hold Up</h1>
+        <div class="rule"></div>
+        <p id="errorMsg" class="hint"></p>
+        <button id="retryBtn" class="btn" type="button">Try Again</button>
+      </div>
     </div>
 
     <script type="module" src="./src/main.js"></script>

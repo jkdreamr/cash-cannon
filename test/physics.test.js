@@ -20,6 +20,14 @@ describe('physics', () => {
     expect(count(sys2, 'bill')).toBe(6);
   });
 
+  test('continuous mode: explicit bill count and no shell', () => {
+    const sys = createSystem();
+    spawnBurst(sys, { tip: TIP, aim: AIM, rng: () => 0.5, bills: 2, shell: false });
+    expect(count(sys, 'bill')).toBe(2);
+    expect(count(sys, 'shell')).toBe(0);
+    expect(count(sys, 'flash')).toBe(1); // flash still fires each shot
+  });
+
   test('gravity accelerates a particle downward', () => {
     const sys = createSystem();
     sys.particles.push({ kind: 'bill', x: 0, y: 0, vx: 0, vy: 0, rot: 0, vrot: 0, flip: 0, vflip: 0, life: 5, maxLife: 5 });

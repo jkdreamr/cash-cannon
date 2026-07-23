@@ -8,7 +8,7 @@ export function createSystem() {
   return { particles: [] };
 }
 
-export function spawnBurst(sys, { tip, aim, nowMs = 0, rng = Math.random }) {
+export function spawnBurst(sys, { tip, aim, nowMs = 0, rng = Math.random, bills, shell = true }) {
   // Muzzle flash.
   sys.particles.push({
     kind: 'flash', x: tip.x, y: tip.y, vx: 0, vy: 0, rot: 0, vrot: 0,
@@ -21,8 +21,9 @@ export function spawnBurst(sys, { tip, aim, nowMs = 0, rng = Math.random }) {
     rot: 0, vrot: 0, r: 22, life: 0.5, maxLife: 0.5,
   });
 
-  // Bills — tight burst with upward recoil bias + cone spread.
-  const billCount = 3 + Math.floor(rng() * 4); // 3..6
+  // Bills - burst with upward recoil bias + cone spread. Continuous fire passes
+  // a small `bills` count per tick for a steady stream; a single shot omits it.
+  const billCount = bills == null ? 3 + Math.floor(rng() * 4) : bills;
   for (let i = 0; i < billCount; i++) {
     const spreadDeg = (rng() - 0.5) * 24;   // +/- 12 deg cone
     const recoilDeg = -8 - rng() * 6;       // recoil kick biases the shot upward (screen -y)
@@ -37,14 +38,16 @@ export function spawnBurst(sys, { tip, aim, nowMs = 0, rng = Math.random }) {
     });
   }
 
-  // Shell casing — ejected roughly perpendicular to aim, with a little pop up.
-  const shellDir = rotate(aim, 80 + rng() * 20);
-  const shellSpeed = 300 + rng() * 200;
-  sys.particles.push({
-    kind: 'shell', x: tip.x, y: tip.y,
-    vx: shellDir.x * shellSpeed, vy: shellDir.y * shellSpeed - 120,
-    rot: 0, vrot: (rng() - 0.5) * 30, life: 1.4, maxLife: 1.4,
-  });
+  // Shell casing - ejected roughly perpendicular to aim, with a little pop up.
+  if (shell) {
+    const shellDir = rotate(aim, 80 + rng() * 20);
+    const shellSpeed = 300 + rng() * 200;
+    sys.particles.push({
+      kind: 'shell', x: tip.x, y: tip.y,
+      vx: shellDir.x * shellSpeed, vy: shellDir.y * shellSpeed - 120,
+      rot: 0, vrot: (rng() - 0.5) * 30, life: 1.4, maxLife: 1.4,
+    });
+  }
 
   enforceCap(sys);
 }

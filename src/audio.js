@@ -46,15 +46,30 @@ export function createAudio(makeCtx) {
     src.start(t0);
   }
 
-  function fire() {
+  // Light per-shot crack for rapid continuous fire (played ~14x/sec).
+  function shot() {
     if (!enabled) return;
     const c = ensure();
     if (!c) return;
     const t = c.currentTime;
-    noiseBurst(c, t, 0.12, 0.5);            // gunshot crack
-    tone(c, 'sine', 90, t, 0.14, 0.5);      // low thump
-    tone(c, 'square', 1200, t + 0.02, 0.12, 0.18); // "cha"
-    tone(c, 'square', 1750, t + 0.10, 0.18, 0.18); // "ching"
+    noiseBurst(c, t, 0.05, 0.3);           // short crack
+    tone(c, 'sine', 130, t, 0.07, 0.26);   // low thump
+  }
+
+  // Cash-register bells, played periodically while firing (not every shot).
+  function chaChing() {
+    if (!enabled) return;
+    const c = ensure();
+    if (!c) return;
+    const t = c.currentTime;
+    tone(c, 'square', 1200, t, 0.10, 0.16);        // "cha"
+    tone(c, 'square', 1750, t + 0.08, 0.16, 0.16); // "ching"
+  }
+
+  // Full one-off shot (crack + cha-ching together).
+  function fire() {
+    shot();
+    chaChing();
   }
 
   function cock() {
@@ -70,6 +85,8 @@ export function createAudio(makeCtx) {
       enabled = !!v;
     },
     isEnabled: () => enabled,
+    shot,
+    chaChing,
     fire,
     cock,
   };

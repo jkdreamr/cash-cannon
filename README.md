@@ -1,15 +1,19 @@
 # Cash Cannon 💵🔫
 
-Turn on your camera, make a finger gun, cock your thumb, and **fire money**.
-Runs entirely in your browser — hand tracking via MediaPipe, no backend.
+Turn on your camera, make a finger gun, and **make it rain**.
+Runs entirely in your browser with hand tracking via MediaPipe, no backend.
 
 ## How to play
 
 1. Click **Enable Camera** and allow access.
-2. Make a finger gun 👉 (index out, other fingers curled).
-3. **Thumb up = cocked.** Drop the thumb to fire a burst of bills along your aim.
-4. Raise and drop the thumb again for each shot. Two hands = dual wield.
-5. Toggle sound with the 🔊 button.
+2. Make a finger gun (index out, other fingers folded).
+3. **Hold the gun shape** and cash streams out of your fingertip. Point to aim.
+4. Drop the shape to stop. Two hands = dual wield.
+5. Toggle sound with the speaker button.
+
+Tip: good light and a plain background behind your hand make tracking more
+reliable. The finger shape is read in 3D, so it still works when the barrel
+points toward the camera.
 
 ## Run locally
 
@@ -25,7 +29,7 @@ model from a CDN, so you need internet the first time.
 
 ## Deploy
 
-It's a static site — push the folder to GitHub Pages, Netlify, or Vercel.
+It's a static site - push the folder to GitHub Pages, Netlify, or Vercel.
 Those serve HTTPS, so the camera works with no extra setup. Nothing to build.
 
 ## Develop
