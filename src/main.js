@@ -21,7 +21,6 @@ const renderer = createRenderer(canvas);
 const audio = createAudio();
 const system = createSystem();
 const firingStates = new Map(); // handedness label -> firing state
-const prevPhase = new Map();    // handedness label -> last phase (for cock click)
 
 let landmarker = null;
 let running = false;
@@ -154,7 +153,6 @@ function loop(ts) {
       shakeMag = 7;
     }
     if (state.phase === 'COCKED' && before !== 'COCKED') audio.cock();
-    prevPhase.set(label, state.phase);
 
     if (hand.isGunShape) status.push({ cocked: state.phase === 'COCKED' });
   }
