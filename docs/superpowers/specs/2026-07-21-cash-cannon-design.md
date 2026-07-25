@@ -1,4 +1,4 @@
-# Cash Cannon — Design Spec
+# Cash Cannon - Design Spec
 
 - **Date:** 2026-07-21
 - **Status:** Approved (ready for implementation plan)
@@ -7,18 +7,18 @@
 
 A fun, browser-based interactive site. The user enables their camera, makes a
 finger-gun gesture (index finger extended, thumb up like a cocked hammer), and
-when they **drop the thumb** the "gun" fires — glossy dollar bills launch out of
+when they **drop the thumb** the "gun" fires - glossy dollar bills launch out of
 the fingertip with a muzzle flash, recoil, and an ejected shell casing. The
 whole thing runs client-side with no backend.
 
 **Vibe:** flashy money (glossy green/gold bills, satisfying) but **minimal and
-tasteful** — restrained UI chrome, physics that feel *correct*, no chaotic
+tasteful** - restrained UI chrome, physics that feel *correct*, no chaotic
 particle spam.
 
 ## Goals
 
 - Seamless: enable camera → make the gesture → money fires. No configuration.
-- **Super realistic firing:** single-action revolver feel — cock (thumb up),
+- **Super realistic firing:** single-action revolver feel - cock (thumb up),
   fire (thumb drop), re-cock to fire again. Muzzle flash, recoil kick, shell
   casing, smoke puff.
 - Tasteful physics: bills launch fast along the aim vector, then arc under
@@ -43,7 +43,7 @@ particle spam.
 ## User Experience / Flow
 
 1. **Landing screen:** centered title "Cash Cannon", a one-line how-to
-   ("Make a finger gun 👉 — thumb up to cock, drop it to fire"), and a single
+   ("Make a finger gun 👉 - thumb up to cock, drop it to fire"), and a single
    **Enable Camera** button. (A user gesture is required for both camera and
    audio, so this button doubles as the audio-unlock.)
 2. On click: request camera. On grant, the model loads (brief "Loading…"
@@ -123,7 +123,7 @@ large angle (thumb abducted away from the index). Released/"down" = small angle
 (thumb rotated toward the index). Hysteresis thresholds (e.g. up if angle ≳ 35°,
 down if ≲ 20°; tuned during implementation, covered by tests).
 
-## Firing Mechanic — "Super Realistic" (single-action)
+## Firing Mechanic - "Super Realistic" (single-action)
 
 Per-hand state machine in `firing.js`:
 
@@ -135,14 +135,14 @@ NO_GUN ──gun detected──► GUN_IDLE ──thumb up──► COCKED ─�
 ```
 
 - **GUN_IDLE:** gun formed but not yet cocked (e.g. thumb still down). This is
-  the key guard: forming a gun with the thumb already down does **not** fire —
+  the key guard: forming a gun with the thumb already down does **not** fire -
   you must cock first. Never fires from this state.
 - **COCKED:** gun held with thumb up (hammer back). Status dot green.
 - **Fire trigger:** the thumb crossing the down threshold *from COCKED* emits
   exactly one fire event (edge-triggered, not level-triggered). A shot is only
   possible after a genuine thumb-up → thumb-down transition.
 - **Re-cock required:** after firing you must raise the thumb back up
-  (COCKED) before the next shot can fire — mimics single-action revolver cocking
+  (COCKED) before the next shot can fire - mimics single-action revolver cocking
   and prevents machine-gun spam.
 - **Cooldown:** a minimum time between shots (~120 ms) as a safety debounce even
   if the thumb is flicked very fast.
@@ -155,7 +155,7 @@ NO_GUN ──gun detected──► GUN_IDLE ──thumb up──► COCKED ─�
   small per-shot randomness; a brief, decaying screen shake (2–4 px) for kick.
   (We can't move the user's hand, so recoil is expressed in the effect.)
 - **Shell casing:** a small gold coin/casing ejected roughly perpendicular to
-  the aim, spinning, falling under gravity — the "spent round."
+  the aim, spinning, falling under gravity - the "spent round."
 - **Smoke:** a small translucent puff at the muzzle that rises and fades.
 - **Round size:** a *tight* burst of ~3–6 bills per shot (a discrete "round",
   not a firehose), high initial speed, each with random spin.
@@ -169,7 +169,7 @@ NO_GUN ──gun detected──► GUN_IDLE ──thumb up──► COCKED ─�
 - `step(dt)` integrates: gravity (+y), air drag (velocity *= drag^dt), rotation
   (`rot += vrot*dt`), life decay. Bills fade/return to pool when off-screen or
   life ≤ 0.
-- **Particle cap** (e.g. 400) — oldest recycled first — to protect performance.
+- **Particle cap** (e.g. 400) - oldest recycled first - to protect performance.
 - Deterministic given inputs + injected RNG, so bursts and the step are testable.
 
 ## Rendering (`render.js`, Canvas 2D)
@@ -183,7 +183,7 @@ NO_GUN ──gun detected──► GUN_IDLE ──thumb up──► COCKED ─�
   horizontal scale (`scaleX`) with rotation for a 3D-flip feel.
 - Screen shake applied as a small canvas translate that decays per frame.
 
-## Audio (`audio.js`, Web Audio API — synthesized, no files)
+## Audio (`audio.js`, Web Audio API - synthesized, no files)
 
 - Unlocked by the Enable-Camera click (autoplay policy).
 - **Fire SFX:** short noise-burst transient + low thump (the "shot") blended
@@ -222,7 +222,7 @@ NO_GUN ──gun detected──► GUN_IDLE ──thumb up──► COCKED ─�
 
 ## Running Locally & Deployment
 
-- **Camera requires a secure context:** `https://` or `localhost` — *not*
+- **Camera requires a secure context:** `https://` or `localhost` - *not*
   `file://`. To run locally: `python3 -m http.server` (preinstalled on macOS)
   in the project root, then open `http://localhost:8000`.
 - **Deploy:** upload the folder to any static host (GitHub Pages / Netlify /
@@ -233,11 +233,11 @@ NO_GUN ──gun detected──► GUN_IDLE ──thumb up──► COCKED ─�
 ## Testing
 
 - **Unit (vitest, dev-only):**
-  - `gesture.test.js` — synthetic landmark sets → correct is-gun / aim /
+  - `gesture.test.js` - synthetic landmark sets → correct is-gun / aim /
     thumb-angle classification, including hysteresis edges.
-  - `firing.test.js` — the state machine: cock → fire emits exactly one event,
+  - `firing.test.js` - the state machine: cock → fire emits exactly one event,
     re-cock required, cooldown respected, gun-loss resets.
-  - `physics.test.js` — spawn counts, integration (gravity/drag), off-screen
+  - `physics.test.js` - spawn counts, integration (gravity/drag), off-screen
     recycling, particle cap, determinism with injected RNG.
 - **Manual / live:** camera feed, gesture feel, recoil, sound, error overlays,
   two-hand dual wield. (Vision + rendering can't be meaningfully unit-tested.)

@@ -16,8 +16,8 @@ Every task's requirements implicitly include this section.
 - **`package.json` has `"type": "module"`** so `.js` is ESM in both Node and browser. All imports use explicit `.js` extensions and relative paths.
 - **No runtime build step.** The shipped site is `index.html` + `src/*.js` loaded via `<script type="module">`. vitest and `node_modules` never ship and are never imported by `src/`.
 - **MediaPipe pinned:** ESM + WASM from `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14`; model from `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`.
-- **Camera needs a secure context** (`https://` or `localhost`/`127.0.0.1`) — never `file://`.
-- **All audio is synthesized** via Web Audio — zero audio asset files.
+- **Camera needs a secure context** (`https://` or `localhost`/`127.0.0.1`) - never `file://`.
+- **All audio is synthesized** via Web Audio - zero audio asset files.
 - **Coordinate space:** `gesture` and `physics` operate in *any* consistent 2D space. `main.js` feeds them **mirrored pixel space**: `px = (1 - lm.x) * width`, `py = lm.y * height`. Because the feed is drawn mirrored (selfie), this keeps aim and particles aligned with what the user sees, and bill text renders un-mirrored.
 - **Exact public names** (consumed across tasks): `classifyHand`, `fingerExtended`, `LM`; `createHandFiringState`, `updateFiring`; `createSystem`, `spawnBurst`, `step`, `MAX_PARTICLES`; `createAudio`; `createRenderer`; vec helpers `sub`, `len`, `dist`, `normalize`, `angleBetweenDeg`, `rotate`.
 
@@ -121,7 +121,7 @@ git commit -m "chore: scaffold project with vitest harness"
   - `angleBetweenDeg(a, b) -> number` (0..180)
   - `rotate(v, deg) -> {x, y}` (standard 2D rotation; +deg rotates x→y)
 
-- [ ] **Step 1: Write the failing test** — `test/vec.test.js`
+- [ ] **Step 1: Write the failing test** - `test/vec.test.js`
 
 ```js
 import { describe, expect, test } from 'vitest';
@@ -156,9 +156,9 @@ describe('vec', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/vec.test.js`
-Expected: FAIL — cannot resolve `../src/vec.js`.
+Expected: FAIL - cannot resolve `../src/vec.js`.
 
-- [ ] **Step 3: Write minimal implementation** — `src/vec.js`
+- [ ] **Step 3: Write minimal implementation** - `src/vec.js`
 
 ```js
 export function sub(a, b) {
@@ -199,7 +199,7 @@ export function rotate(v, deg) {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run test/vec.test.js`
-Expected: PASS — all vec tests green.
+Expected: PASS - all vec tests green.
 
 - [ ] **Step 5: Commit**
 
@@ -219,12 +219,12 @@ git commit -m "feat: add 2D vector math helpers"
 **Interfaces:**
 - Consumes: `sub, normalize, dist, angleBetweenDeg` from `src/vec.js`.
 - Produces:
-  - `LM` — landmark index constants.
+  - `LM` - landmark index constants.
   - `fingerExtended(lm, tipIdx, pipIdx, wristIdx=0) -> boolean`
   - `classifyHand(lm) -> { isGunShape, tip:{x,y}, aim:{x,y}, thumbAngle:number, fingers:{indexExtended,middleExtended,ringExtended,pinkyExtended} }`
   - `lm` is an array of ≥21 points `{x, y}` in any consistent 2D space.
 
-- [ ] **Step 1: Write the failing test** — `test/gesture.test.js`
+- [ ] **Step 1: Write the failing test** - `test/gesture.test.js`
 
 ```js
 import { describe, expect, test } from 'vitest';
@@ -298,9 +298,9 @@ describe('classifyHand', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/gesture.test.js`
-Expected: FAIL — cannot resolve `../src/gesture.js`.
+Expected: FAIL - cannot resolve `../src/gesture.js`.
 
-- [ ] **Step 3: Write minimal implementation** — `src/gesture.js`
+- [ ] **Step 3: Write minimal implementation** - `src/gesture.js`
 
 ```js
 import { sub, normalize, dist, angleBetweenDeg } from './vec.js';
@@ -352,7 +352,7 @@ export function classifyHand(lm) {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run test/gesture.test.js`
-Expected: PASS — all gesture tests green.
+Expected: PASS - all gesture tests green.
 
 - [ ] **Step 5: Commit**
 
@@ -378,7 +378,7 @@ git commit -m "feat: classify finger-gun gesture from hand landmarks"
     - `phase` ∈ `NO_GUN | GUN_IDLE | COCKED | FIRED`.
     - `cfg` defaults: `{ thumbUpDeg:32, thumbDownDeg:18, graceFrames:6, cooldownMs:120 }`.
 
-- [ ] **Step 1: Write the failing test** — `test/firing.test.js`
+- [ ] **Step 1: Write the failing test** - `test/firing.test.js`
 
 ```js
 import { describe, expect, test } from 'vitest';
@@ -445,9 +445,9 @@ describe('updateFiring', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/firing.test.js`
-Expected: FAIL — cannot resolve `../src/firing.js`.
+Expected: FAIL - cannot resolve `../src/firing.js`.
 
-- [ ] **Step 3: Write minimal implementation** — `src/firing.js`
+- [ ] **Step 3: Write minimal implementation** - `src/firing.js`
 
 ```js
 const DEFAULTS = { thumbUpDeg: 32, thumbDownDeg: 18, graceFrames: 6, cooldownMs: 120 };
@@ -507,7 +507,7 @@ export function updateFiring(state, hand, nowMs, cfg = DEFAULTS) {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run test/firing.test.js`
-Expected: PASS — all firing tests green.
+Expected: PASS - all firing tests green.
 
 - [ ] **Step 5: Commit**
 
@@ -529,11 +529,11 @@ git commit -m "feat: single-action finger-gun firing state machine"
 - Produces:
   - `MAX_PARTICLES` (number).
   - `createSystem() -> { particles: [] }`
-  - `spawnBurst(sys, { tip:{x,y}, aim:{x,y}, nowMs?, rng? }) -> void` — appends flash, smoke, 3–6 bills, 1 shell; enforces the cap.
-  - `step(sys, dt, bounds:{width,height}) -> void` — integrates gravity/drag/rotation, culls dead/off-screen particles.
+  - `spawnBurst(sys, { tip:{x,y}, aim:{x,y}, nowMs?, rng? }) -> void` - appends flash, smoke, 3–6 bills, 1 shell; enforces the cap.
+  - `step(sys, dt, bounds:{width,height}) -> void` - integrates gravity/drag/rotation, culls dead/off-screen particles.
   - Particle kinds: `flash | smoke | bill | shell`. Bills carry `flip`/`vflip` (tumble); flash/smoke carry `r` (radius).
 
-- [ ] **Step 1: Write the failing test** — `test/physics.test.js`
+- [ ] **Step 1: Write the failing test** - `test/physics.test.js`
 
 ```js
 import { describe, expect, test } from 'vitest';
@@ -598,9 +598,9 @@ describe('physics', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/physics.test.js`
-Expected: FAIL — cannot resolve `../src/physics.js`.
+Expected: FAIL - cannot resolve `../src/physics.js`.
 
-- [ ] **Step 3: Write minimal implementation** — `src/physics.js`
+- [ ] **Step 3: Write minimal implementation** - `src/physics.js`
 
 ```js
 import { rotate } from './vec.js';
@@ -626,7 +626,7 @@ export function spawnBurst(sys, { tip, aim, nowMs = 0, rng = Math.random }) {
     rot: 0, vrot: 0, r: 22, life: 0.5, maxLife: 0.5,
   });
 
-  // Bills — tight burst with upward recoil bias + cone spread.
+  // Bills - tight burst with upward recoil bias + cone spread.
   const billCount = 3 + Math.floor(rng() * 4); // 3..6
   for (let i = 0; i < billCount; i++) {
     const spreadDeg = (rng() - 0.5) * 24;   // +/- 12 deg cone
@@ -642,7 +642,7 @@ export function spawnBurst(sys, { tip, aim, nowMs = 0, rng = Math.random }) {
     });
   }
 
-  // Shell casing — ejected roughly perpendicular to aim, with a little pop up.
+  // Shell casing - ejected roughly perpendicular to aim, with a little pop up.
   const shellDir = rotate(aim, 80 + rng() * 20);
   const shellSpeed = 300 + rng() * 200;
   sys.particles.push({
@@ -689,7 +689,7 @@ export function step(sys, dt, bounds) {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run test/physics.test.js`
-Expected: PASS — all physics tests green.
+Expected: PASS - all physics tests green.
 
 - [ ] **Step 5: Commit**
 
@@ -712,7 +712,7 @@ git commit -m "feat: dollar-bill particle system with recoil, shell, smoke"
   - `createAudio(makeCtx?) -> { unlock(), setEnabled(bool), isEnabled(), fire(), cock() }`
   - `makeCtx` is an optional factory returning an AudioContext-like object (injected for tests). In the browser it defaults to `window.AudioContext || window.webkitAudioContext`.
 
-- [ ] **Step 1: Write the failing test** — `test/audio.test.js`
+- [ ] **Step 1: Write the failing test** - `test/audio.test.js`
 
 ```js
 import { describe, expect, test } from 'vitest';
@@ -772,9 +772,9 @@ describe('createAudio', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/audio.test.js`
-Expected: FAIL — cannot resolve `../src/audio.js`.
+Expected: FAIL - cannot resolve `../src/audio.js`.
 
-- [ ] **Step 3: Write minimal implementation** — `src/audio.js`
+- [ ] **Step 3: Write minimal implementation** - `src/audio.js`
 
 ```js
 export function createAudio(makeCtx) {
@@ -858,7 +858,7 @@ export function createAudio(makeCtx) {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run test/audio.test.js`
-Expected: PASS — both audio tests green.
+Expected: PASS - both audio tests green.
 
 - [ ] **Step 5: Commit**
 
@@ -882,7 +882,7 @@ git commit -m "feat: synthesized gunshot + cha-ching audio"
   - `state = { video, particles, bounds:{width,height}, shake:{x,y}, status:[{cocked:boolean}] }`
   - Draws the mirrored video, then particles, then per-hand status dots.
 
-- [ ] **Step 1: Write the failing test** — `test/render.test.js`
+- [ ] **Step 1: Write the failing test** - `test/render.test.js`
 
 ```js
 import { describe, expect, test } from 'vitest';
@@ -940,9 +940,9 @@ describe('createRenderer', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run test/render.test.js`
-Expected: FAIL — cannot resolve `../src/render.js`.
+Expected: FAIL - cannot resolve `../src/render.js`.
 
-- [ ] **Step 3: Write minimal implementation** — `src/render.js`
+- [ ] **Step 3: Write minimal implementation** - `src/render.js`
 
 ```js
 const BILL_W = 84;
@@ -1075,12 +1075,12 @@ function roundRect(ctx, x, y, w, h, r) {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run test/render.test.js`
-Expected: PASS — renderer smoke test green.
+Expected: PASS - renderer smoke test green.
 
 - [ ] **Step 5: Run the full suite**
 
 Run: `npm test`
-Expected: PASS — all specs across vec/gesture/firing/physics/audio/render.
+Expected: PASS - all specs across vec/gesture/firing/physics/audio/render.
 
 - [ ] **Step 6: Commit**
 
@@ -1161,7 +1161,7 @@ git commit -m "feat: Canvas 2D renderer for feed, bills, flash, shell, smoke"
     <div id="start" class="overlay">
       <h1 class="title">Cash Cannon</h1>
       <p id="hint" class="hint">
-        Make a finger gun 👉 — thumb <b>up</b> to cock, drop it to <b>fire</b>. Point to aim.
+        Make a finger gun 👉 - thumb <b>up</b> to cock, drop it to <b>fire</b>. Point to aim.
       </p>
       <button id="startBtn" class="btn">Enable Camera</button>
     </div>
@@ -1180,7 +1180,7 @@ git commit -m "feat: Canvas 2D renderer for feed, bills, flash, shell, smoke"
 - [ ] **Step 2: Verify it loads**
 
 Run: `npm run serve` then open `http://localhost:8000`.
-Expected: the "Cash Cannon" start screen renders with the gradient title, hint, and **Enable Camera** button. (Clicking does nothing yet — `main.js` arrives in Task 9. The browser console will show a 404/really an empty module for `./src/main.js` until then; that's expected.)
+Expected: the "Cash Cannon" start screen renders with the gradient title, hint, and **Enable Camera** button. (Clicking does nothing yet - `main.js` arrives in Task 9. The browser console will show a 404/really an empty module for `./src/main.js` until then; that's expected.)
 
 - [ ] **Step 3: Commit**
 
@@ -1260,7 +1260,7 @@ async function loadModel() {
   try {
     return await HandLandmarker.createFromOptions(fileset, opts);
   } catch (e) {
-    // Some machines/browsers lack a usable GPU delegate — fall back to CPU.
+    // Some machines/browsers lack a usable GPU delegate - fall back to CPU.
     opts.baseOptions.delegate = 'CPU';
     return await HandLandmarker.createFromOptions(fileset, opts);
   }
@@ -1389,7 +1389,7 @@ soundBtn.addEventListener('click', () => {
 });
 ```
 
-- [ ] **Step 2: Manual verification — happy path**
+- [ ] **Step 2: Manual verification - happy path**
 
 Run: `npm run serve`, open `http://localhost:8000`, click **Enable Camera**, allow the camera.
 Expected:
@@ -1399,7 +1399,7 @@ Expected:
 - You must raise the thumb and drop it again to fire the next shot (no machine-gun).
 - Two hands both work independently.
 
-- [ ] **Step 3: Manual verification — error paths**
+- [ ] **Step 3: Manual verification - error paths**
 
 - Click **Enable Camera** and **deny** permission → friendly "permission was blocked" overlay with Try Again; granting on retry works.
 - Open `index.html` via `file://` → the secure-context overlay explains to use `npm run serve`.
@@ -1428,7 +1428,7 @@ git commit -m "feat: wire camera, hand tracking, firing, particles, audio"
 # Cash Cannon 💵🔫
 
 Turn on your camera, make a finger gun, cock your thumb, and **fire money**.
-Runs entirely in your browser — hand tracking via MediaPipe, no backend.
+Runs entirely in your browser - hand tracking via MediaPipe, no backend.
 
 ## How to play
 
@@ -1452,7 +1452,7 @@ model from a CDN, so you need internet the first time.
 
 ## Deploy
 
-It's a static site — push the folder to GitHub Pages, Netlify, or Vercel.
+It's a static site - push the folder to GitHub Pages, Netlify, or Vercel.
 Those serve HTTPS, so the camera works with no extra setup. Nothing to build.
 
 ## Develop
@@ -1470,7 +1470,7 @@ Side effects (camera, model, canvas, audio) live in `src/{main,render,audio}.js`
 - [ ] **Step 2: Run the full test suite one last time**
 
 Run: `npm test`
-Expected: PASS — every spec green.
+Expected: PASS - every spec green.
 
 - [ ] **Step 3: Final manual smoke test**
 
@@ -1502,6 +1502,6 @@ git commit -m "docs: add README with run and deploy instructions"
 
 **Placeholder scan:** No TBD/TODO; every code and test step is complete. ✓
 
-**Type consistency:** Names match across tasks — `classifyHand`→`{isGunShape,tip,aim,thumbAngle}` consumed by `updateFiring`; `updateFiring` returns `{didFire,tip,aim}` consumed by `spawnBurst({tip,aim,nowMs,rng})`; particle fields (`kind,x,y,rot,r,flip,life,maxLife`) produced by `physics.js` and consumed by `render.js`; `createAudio().{fire,cock,unlock,setEnabled,isEnabled}` used in `main.js`. ✓
+**Type consistency:** Names match across tasks - `classifyHand`→`{isGunShape,tip,aim,thumbAngle}` consumed by `updateFiring`; `updateFiring` returns `{didFire,tip,aim}` consumed by `spawnBurst({tip,aim,nowMs,rng})`; particle fields (`kind,x,y,rot,r,flip,life,maxLife`) produced by `physics.js` and consumed by `render.js`; `createAudio().{fire,cock,unlock,setEnabled,isEnabled}` used in `main.js`. ✓
 
 **Coordinate space:** `main.js` maps to mirrored pixel space once (`(1-x)*w, y*h`); gesture/physics stay space-agnostic; renderer draws bills un-mirrored so text reads correctly. ✓
