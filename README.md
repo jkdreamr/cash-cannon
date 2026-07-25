@@ -5,7 +5,7 @@ Runs entirely in your browser with hand tracking via MediaPipe, no backend.
 
 ## How to play
 
-1. Click **Enable Camera** and allow access.
+1. Click **Start camera** and allow access.
 2. Make a finger gun (index out, other fingers folded).
 3. **Hold the gun shape** and cash streams out of your fingertip. Point to aim.
 4. Drop the shape to stop. Two hands = dual wield.
