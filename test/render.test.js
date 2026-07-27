@@ -6,10 +6,13 @@ const cam = createCamera(1280, 720);
 
 function fakeCtx() {
   const calls = { clearRect: 0, fill: 0, drawImage: 0, stroke: 0, fillText: 0, transform: 0 };
+  const transforms = [];
   const grad = { addColorStop() {} };
   return {
     calls,
-    setTransform() {}, transform() { calls.transform++; },
+    transforms,
+    setTransform() {},
+    transform(a, b, c, d, e, f) { calls.transform++; transforms.push([a, b, c, d, e, f]); },
     clearRect() { calls.clearRect++; },
     save() {}, restore() {}, translate() {}, scale() {}, rotate() {},
     beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, arc() {}, arcTo() {}, ellipse() {},
@@ -54,7 +57,6 @@ describe('renderer', () => {
       particles: [
         bill({ x: 0, y: 0, z: 1.5 }),
         bill({ x: 0.3, y: -0.2, z: 3 }),
-        { kind: 'flash', p: { x: 0, y: 0, z: 1 }, r: 0.05, life: 0.05, maxLife: 0.07 },
       ],
       shake: { x: 0, y: 0 },
     });
@@ -100,6 +102,28 @@ describe('renderer', () => {
     const r = createRenderer(canvas, { createCanvas: fakeCanvas });
     r.draw({ video, cam, particles: [bill({ x: 0, y: 0, z: -1 })], shake: { x: 0, y: 0 } });
     expect(canvas.ctx.calls.transform).toBe(0); // nothing drawn in note space
+  });
+
+  test('note artwork is never drawn mirrored, whichever side faces the camera', () => {
+    // A left-handed screen basis makes the canvas flip everything drawn into
+    // it, which renders the denomination back to front. Every note must be
+    // laid out with a positive determinant regardless of its orientation.
+    const orientations = [
+      { n: { x: 0, y: 0, z: -1 }, t: { x: 1, y: 0, z: 0 } },  // facing the lens
+      { n: { x: 0, y: 0, z: 1 }, t: { x: 1, y: 0, z: 0 } },   // facing away
+      { n: { x: 0, y: 0, z: -1 }, t: { x: 0, y: 1, z: 0 } },  // rolled 90 degrees
+      { n: { x: 0.4, y: -0.5, z: -0.77 }, t: { x: 0.9, y: 0.44, z: 0 } }, // tilted
+    ];
+    for (const o of orientations) {
+      const canvas = fakeCanvas();
+      const r = createRenderer(canvas, { createCanvas: fakeCanvas });
+      r.draw({ video, cam, particles: [bill({ x: 0, y: 0, z: 1.2 }, o)], shake: { x: 0, y: 0 } });
+      expect(canvas.ctx.transforms.length).toBeGreaterThan(0);
+      for (const m of canvas.ctx.transforms) {
+        const det = m[0] * m[3] - m[1] * m[2];
+        expect(det).toBeGreaterThan(0);
+      }
+    }
   });
 
   test('a note resting on the person is placed from its screen anchor', () => {

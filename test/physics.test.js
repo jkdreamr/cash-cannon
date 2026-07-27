@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  createSystem, spawnBurst, spawnRain, spawnFlash, step,
+  createSystem, spawnBurst, spawnRain, step,
   carryStuck, shakeStuck, knockStuck, countStuck, MAX_PARTICLES,
 } from '../src/physics.js';
 import { createCamera } from '../src/camera3d.js';
@@ -143,6 +143,34 @@ describe('landing on the person', () => {
     expect(countStuck(sys)).toBe(0);
   });
 
+  test('notes do not pile into the same spot, so money never lands as a clump', () => {
+    const sys = createSystem();
+    // Twenty notes all aimed at exactly the same point on the body.
+    for (let i = 0; i < 20; i++) {
+      spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
+      sys.particles[sys.particles.length - 1].p = { x: 0, y: -0.2, z: 1.4 };
+    }
+    run(sys, 3, personEnv());
+    // Only one can occupy that spot; the rest slide off and keep falling.
+    expect(countStuck(sys)).toBe(1);
+  });
+
+  test('a note resting on a top surface lies flatter than one caught on the front', () => {
+    const stickAt = (v) => {
+      const sys = createSystem();
+      spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
+      sys.particles[0].p = { x: 0, y: v, z: 1.4 };
+      run(sys, 3, personEnv());
+      return sys.particles.find((p) => p.stuck);
+    };
+    // Start above the head so the note first meets the body at its top edge.
+    const onTop = stickAt(-0.36);
+    expect(onTop).toBeTruthy();
+    expect(onTop.top).toBe(true);
+    // Lying on a surface means the face points mostly upward, not at the lens.
+    expect(Math.abs(onTop.n.y)).toBeGreaterThan(Math.abs(onTop.n.z));
+  });
+
   test('resting notes ride along when the person moves', () => {
     const sys = createSystem();
     spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
@@ -233,11 +261,4 @@ describe('housekeeping', () => {
     expect(countStuck(sys)).toBe(1); // the resting note survived the cull
   });
 
-  test('the muzzle flash expires quickly', () => {
-    const sys = createSystem();
-    spawnFlash(sys, { x: 0, y: 0, z: 1 });
-    expect(sys.particles.length).toBe(1);
-    run(sys, 0.4);
-    expect(sys.particles.length).toBe(0);
-  });
 });
