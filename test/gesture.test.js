@@ -13,9 +13,9 @@ function gunHand({ forward = false, thumb = 'up' } = {}) {
     lm[3] = { x: 0.34, y: 0.70, z: 0 };
     lm[4] = { x: 0.26, y: 0.66, z: 0 };
   } else {
-    // Laid back alongside the index finger, pointing the same way it does.
-    lm[3] = { x: 0.44, y: 0.66, z: 0 };
-    lm[4] = { x: 0.46, y: 0.58, z: 0 };
+    // Laid back against the index finger, the way a hammer rests down.
+    lm[3] = { x: 0.45, y: 0.60, z: 0 };
+    lm[4] = { x: 0.47, y: 0.545, z: 0 };
   }
   if (forward) {
     // Index points toward the camera: barely moves in x/y (foreshortened) but
@@ -88,9 +88,17 @@ describe('classifyHand', () => {
     expect(up.isGunShape).toBe(true);
     expect(down.isGunShape).toBe(true);
 
-    expect(up.thumbAngle).toBeGreaterThan(50);
-    expect(down.thumbAngle).toBeLessThan(35);
-    expect(up.thumbStraight).toBe(true);
+    // Measured in knuckle spans, so it does not depend on hand size or how far
+    // away the hand is.
+    expect(up.thumbGap).toBeGreaterThan(0.7);
+    expect(down.thumbGap).toBeLessThan(0.48);
+  });
+
+  test('the hammer reading is independent of hand size and distance', () => {
+    // The same pose, scaled and shifted as if the hand were nearer the lens.
+    const base = gunHand({ thumb: 'up' });
+    const moved = base.map((p) => ({ x: p.x * 2.4 + 0.3, y: p.y * 2.4 - 0.5, z: p.z * 2.4 }));
+    expect(classifyHand(moved).thumbGap).toBeCloseTo(classifyHand(base).thumbGap, 6);
   });
 
   test('detects a gun pointing toward the camera, where 2D distance fails', () => {

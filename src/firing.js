@@ -5,11 +5,15 @@
 // The thumb is the hammer: money only leaves the barrel while it is raised.
 // Thresholds are split so a thumb hovering near the boundary cannot chatter the
 // stream on and off frame to frame.
+// Hammer position is read from how far the thumb tip sits from the index
+// knuckle, in knuckle spans. Measured poses give about 1.1 raised against 0.2
+// laid back, so these sit either side of the middle with a wide band between
+// them and no chattering.
 const DEFAULTS = {
   fireIntervalMs: 50,
   graceFrames: 5,
-  thumbUpDeg: 50,   // cocked clear of the barrel
-  thumbDownDeg: 35, // laid back alongside it
+  thumbUpGap: 0.70,   // cocked clear of the barrel
+  thumbDownGap: 0.48, // laid back against it
 };
 
 export function createHandFiringState() {
@@ -19,7 +23,7 @@ export function createHandFiringState() {
 // Continuous fire while a true finger gun is held: index barrel out, other
 // fingers folded, thumb up. Drop the thumb and the gun stops firing without
 // losing the pose.
-// hand: { isGunShape, thumbAngle, thumbStraight, tip, aim, aimMag } | null
+// hand: { isGunShape, thumbGap, tip, aim, aimMag } | null
 export function updateFiring(state, hand, nowMs, cfg = {}) {
   const c = { ...DEFAULTS, ...cfg };
 
@@ -36,11 +40,10 @@ export function updateFiring(state, hand, nowMs, cfg = {}) {
 
   // Debounced hammer position. A hand reported without thumb information is
   // treated as cocked, so callers that only care about the barrel still work.
-  const straight = hand.thumbStraight !== false;
-  const angle = hand.thumbAngle == null ? 90 : hand.thumbAngle;
+  const gap = hand.thumbGap == null ? 1 : hand.thumbGap;
   if (state.thumb === 'down') {
-    if (straight && angle >= c.thumbUpDeg) state.thumb = 'up';
-  } else if (!straight || angle <= c.thumbDownDeg) {
+    if (gap >= c.thumbUpGap) state.thumb = 'up';
+  } else if (gap <= c.thumbDownGap) {
     state.thumb = 'down';
   }
 

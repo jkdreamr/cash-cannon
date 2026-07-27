@@ -64,12 +64,25 @@ export function classifyHand(screenLm, shapeLm = screenLm) {
   // The barrel: index out, the other three folded.
   const isGunShape = indexExtended && !middleExtended && !ringExtended && !pinkyExtended;
 
-  // The hammer. A raised thumb is straight at its own joint AND cocked away
-  // from the barrel; laid alongside the index it is neither. Both parts are
-  // needed, since a bent thumb tucked into the palm can still happen to point
-  // away from the finger.
-  const thumbStraight =
-    jointAngleDeg(shapeLm, LM.THUMB_MCP, LM.THUMB_IP, LM.THUMB_TIP) >= 125;
+  // The hammer, measured as how far the thumb tip sits from the barrel rather
+  // than by the angle between them. An angle is brittle here: a natural cocked
+  // thumb can sit under 50 degrees from the finger and still be plainly raised,
+  // so a threshold on it misses real poses by a degree or two. The distance
+  // from thumb tip to the index knuckle separates raised from laid-back by
+  // about five to one, and dividing by the knuckle span makes it independent of
+  // hand size, distance from the lens and viewing angle.
+  const span = Math.hypot(
+    ...(() => {
+      const d = between(shapeLm, LM.INDEX_MCP, LM.PINKY_MCP);
+      return [d.x, d.y, d.z];
+    })()
+  );
+  const reach = between(shapeLm, LM.INDEX_PIP, LM.THUMB_TIP);
+  const thumbGap = span > 1e-6
+    ? Math.hypot(reach.x, reach.y, reach.z) / span
+    : 0;
+
+  // Kept for reference and tests; the gap is what actually gates firing.
   const thumbAngle = angleDeg(
     between(shapeLm, LM.THUMB_MCP, LM.THUMB_TIP),
     between(shapeLm, LM.INDEX_MCP, LM.INDEX_TIP)
@@ -80,8 +93,8 @@ export function classifyHand(screenLm, shapeLm = screenLm) {
 
   return {
     isGunShape,
-    thumbStraight,
-    thumbAngle, // degrees away from the barrel; large when the thumb is up
+    thumbGap,   // thumb tip to index knuckle, in knuckle spans; large when up
+    thumbAngle, // degrees away from the barrel, kept for reference
     tip: { x: screenLm[LM.INDEX_TIP].x, y: screenLm[LM.INDEX_TIP].y },
     aim: normalize(aimVec),
     aimMag, // small when the finger points at/away from the camera

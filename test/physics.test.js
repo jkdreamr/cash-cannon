@@ -191,7 +191,7 @@ describe('landing on the person', () => {
     const sys = createSystem();
     spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
     const bill = sys.particles[0];
-    bill.p = { x: 0, y: -0.2, z: 1.4 }; // just above the person, centred
+    bill.p = { x: 0, y: -0.32, z: 1.4 }; // just above the person, centred
     run(sys, 3, personEnv());
     const stuck = sys.particles.filter((p) => p.stuck);
     expect(stuck.length).toBe(1);
@@ -204,7 +204,7 @@ describe('landing on the person', () => {
   test('with no person in frame nothing sticks', () => {
     const sys = createSystem();
     spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
-    sys.particles[0].p = { x: 0, y: -0.2, z: 1.4 };
+    sys.particles[0].p = { x: 0, y: -0.32, z: 1.4 };
     run(sys, 3, personEnv(false));
     expect(countStuck(sys)).toBe(0);
   });
@@ -214,7 +214,7 @@ describe('landing on the person', () => {
     // Twenty notes all aimed at exactly the same point on the body.
     for (let i = 0; i < 20; i++) {
       spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
-      sys.particles[sys.particles.length - 1].p = { x: 0, y: -0.2, z: 1.4 };
+      sys.particles[sys.particles.length - 1].p = { x: 0, y: -0.32, z: 1.4 };
     }
     run(sys, 3, personEnv());
     // Only one can occupy that spot; the rest slide off and keep falling.
@@ -238,6 +238,47 @@ describe('landing on the person', () => {
     // toward the lens is what made resting money look like a floating sticker.
     expect(Math.abs(onTop.n.y)).toBeGreaterThan(0.85);
     expect(Math.abs(onTop.n.y)).toBeGreaterThan(Math.abs(onTop.n.z) * 2);
+  });
+
+  test('with no body tracking, money still never rests on a face', () => {
+    // A tight head-and-shoulders framing puts the shoulders out of shot, so the
+    // pose model has nothing to build a frame from and the silhouette is all we
+    // have. Only its upper boundary is a surface money can sit on; everything
+    // inside that outline is a face or a chest, which holds nothing. Allowing
+    // the interior even a small chance is what put notes across a face.
+    const faceTop = 0.1;
+    const env = {
+      cam, wind: true, time: 0, personZ: 1.5,
+      sampleMask: (u, v) => Math.abs(u - 0.45) < 0.26 && v > faceTop && v < 0.95,
+      stickTest: null, // no pose available
+    };
+
+    // Notes reach a face when their depth only enters the body slab once they
+    // are already down at eye or chest level, so put them there directly rather
+    // than dropping them from above, where they would meet the outline first.
+    const sys = createSystem();
+    const rng = lcg(53);
+    const atHeight = (v) => ((v * cam.height - cam.cy) * 1.5) / cam.f;
+    for (let i = 0; i < 60; i++) {
+      spawnRain(sys, { cam, count: 1, minZ: 1.5, maxZ: 1.5, rng });
+      const note = sys.particles[sys.particles.length - 1];
+      note.p = { x: 0, y: atHeight(0.3 + (i % 5) * 0.12), z: 1.5 }; // face and chest
+    }
+    for (let f = 0; f < 60; f++) step(sys, 1 / 60, { ...env, time: f / 60 });
+
+    // Not one of them may come to rest on a face or a chest.
+    for (const p of sys.particles.filter((q) => q.stuck)) {
+      expect(env.sampleMask(p.u, p.v2 - 0.035)).toBe(false);
+    }
+    expect(sys.particles.filter((q) => q.stuck).length).toBe(0);
+
+    // The top of the outline still catches money, so the fallback is not simply
+    // switched off.
+    const top = createSystem();
+    spawnRain(top, { cam, count: 1, minZ: 1.5, maxZ: 1.5, rng });
+    top.particles[0].p = { x: 0, y: atHeight(faceTop - 0.02), z: 1.5 };
+    for (let f = 0; f < 120; f++) step(top, 1 / 60, { ...env, time: f / 60, rng: () => 0.01 });
+    expect(countStuck(top)).toBe(1);
   });
 
   test('money comes to rest on the head and shoulders, and never on the face', () => {
@@ -309,7 +350,7 @@ describe('landing on the person', () => {
   test('resting notes ride along when the person moves', () => {
     const sys = createSystem();
     spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
-    sys.particles[0].p = { x: 0, y: -0.2, z: 1.4 };
+    sys.particles[0].p = { x: 0, y: -0.32, z: 1.4 };
     run(sys, 3, personEnv());
     const bill = sys.particles.find((p) => p.stuck);
     const u0 = bill.u;
@@ -321,7 +362,7 @@ describe('landing on the person', () => {
     const build = () => {
       const sys = createSystem();
       spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
-      sys.particles[0].p = { x: 0, y: -0.2, z: 1.4 };
+      sys.particles[0].p = { x: 0, y: -0.32, z: 1.4 };
       run(sys, 3, personEnv());
       return sys;
     };
@@ -341,7 +382,7 @@ describe('landing on the person', () => {
   test('ordinary body movement does not dump the money', () => {
     const sys = createSystem();
     spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
-    sys.particles[0].p = { x: 0, y: -0.2, z: 1.4 };
+    sys.particles[0].p = { x: 0, y: -0.32, z: 1.4 };
     run(sys, 3, personEnv());
     expect(countStuck(sys)).toBe(1);
     // Two seconds of normal shifting about, with the most generous dice roll.
@@ -355,7 +396,7 @@ describe('landing on the person', () => {
     const build = () => {
       const sys = createSystem();
       spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
-      sys.particles[0].p = { x: 0, y: -0.2, z: 1.4 };
+      sys.particles[0].p = { x: 0, y: -0.32, z: 1.4 };
       run(sys, 3, personEnv());
       return sys;
     };
@@ -370,7 +411,7 @@ describe('landing on the person', () => {
   test('money knocked off stays where it was, instead of teleporting back', () => {
     const sys = createSystem();
     spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
-    sys.particles[0].p = { x: 0, y: -0.2, z: 1.4 };
+    sys.particles[0].p = { x: 0, y: -0.32, z: 1.4 };
     run(sys, 3, personEnv());
     const bill = sys.particles.find((p) => p.stuck);
     expect(bill).toBeTruthy();
@@ -392,7 +433,7 @@ describe('landing on the person', () => {
   test('a released note falls in front of the body, not inside it', () => {
     const sys = createSystem();
     spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
-    sys.particles[0].p = { x: 0, y: -0.2, z: 1.4 };
+    sys.particles[0].p = { x: 0, y: -0.32, z: 1.4 };
     run(sys, 3, personEnv());
     const bill = sys.particles.find((p) => p.stuck);
     knockStuck(sys, { u: bill.u, v: bill.v2, speed: 2.0 });
@@ -404,7 +445,7 @@ describe('housekeeping', () => {
   test('the particle cap holds and never evicts money resting on the person', () => {
     const sys = createSystem();
     spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
-    sys.particles[0].p = { x: 0, y: -0.2, z: 1.4 };
+    sys.particles[0].p = { x: 0, y: -0.32, z: 1.4 };
     run(sys, 3, {
       cam, wind: false, time: 0, personZ: 1.4, rng: () => 0.01,
       sampleMask: (u, v) => u > 0.3 && u < 0.7 && v > 0.25,
