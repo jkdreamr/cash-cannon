@@ -6,7 +6,7 @@ import {
 import { classifyHand, LM } from './gesture.js';
 import { createHandFiringState, updateFiring } from './firing.js';
 import {
-  createSystem, spawnBurst, spawnRain, spawnFlash, step,
+  createSystem, spawnBurst, spawnRain, step,
   carryStuck, shakeStuck, knockStuck,
 } from './physics.js';
 import { createCamera, unproject, depthFromSpan } from './camera3d.js';
@@ -287,7 +287,6 @@ function loop(ts) {
 
     if (r.didFire) {
       spawnBurst(system, { origin: tip3, dir, count: 2 });
-      spawnFlash(system, tip3);
       audio.shot();
       if (ts - lastChaChingMs > 380) {
         audio.chaChing();

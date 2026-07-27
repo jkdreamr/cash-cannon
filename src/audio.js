@@ -30,30 +30,33 @@ export function createAudio(makeCtx) {
     osc.stop(t0 + dur + 0.02);
   }
 
-  function noiseBurst(c, t0, dur, gain) {
+  function noiseBurst(c, t0, dur, gain, freq = 1900, type = 'lowpass') {
     const n = Math.floor(c.sampleRate * dur);
     const buf = c.createBuffer(1, n, c.sampleRate);
     const data = buf.getChannelData(0);
     for (let i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / n);
     const src = c.createBufferSource();
     src.buffer = buf;
-    const lp = c.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.setValueAtTime(1900, t0);
+    const filter = c.createBiquadFilter();
+    filter.type = type;
+    filter.frequency.setValueAtTime(freq, t0);
     const g = c.createGain();
     g.gain.setValueAtTime(gain, t0);
-    src.connect(lp).connect(g).connect(c.destination);
+    src.connect(filter).connect(g).connect(c.destination);
     src.start(t0);
+    if (src.stop) src.stop(t0 + dur + 0.02);
   }
 
-  // Light per-shot crack for rapid continuous fire (played ~14x/sec).
+  // A money gun does not go bang: it riffles paper. This is the flutter of a
+  // note being thrown, pitched slightly differently on every shot.
   function shot() {
     if (!enabled) return;
     const c = ensure();
     if (!c) return;
     const t = c.currentTime;
-    noiseBurst(c, t, 0.05, 0.3);           // short crack
-    tone(c, 'sine', 130, t, 0.07, 0.26);   // low thump
+    const f = 2400 + Math.random() * 1600;
+    noiseBurst(c, t, 0.045, 0.14, f, 'bandpass');
+    noiseBurst(c, t + 0.012, 0.03, 0.08, f * 0.6, 'bandpass');
   }
 
   // Cash-register bells, played periodically while firing (not every shot).

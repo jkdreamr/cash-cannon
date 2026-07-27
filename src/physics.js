@@ -31,6 +31,14 @@ const BODY_SLAB = 0.28; // m
 const NEAR_CLIP = 0.09; // m, past the lens
 const FAR_CLIP = 12;    // m
 
+// Notes cannot pile into the same spot on a body, and only so many will perch
+// before the rest slide off. Both keep the money looking scattered rather than
+// stacked in a clump.
+// Tuned so notes may touch and overlap like real scattered money, but the
+// closest pair still sits about half a note apart rather than stacking.
+const STUCK_SEPARATION = 0.04; // normalised screen units
+const MAX_STUCK = 18;
+
 export const MAX_PARTICLES = 240;
 
 export function createSystem() {
@@ -62,6 +70,7 @@ function makeBill(p, v, n, t, rng) {
     // A small constant torque so some notes tumble continuously, as real ones do.
     bias: { x: spin(rng, 4), y: spin(rng, 4), z: spin(rng, 4) },
     face: rng() < 0.5 ? 0 : 1,
+    tone: rng(), // slight per-note paper variation, no two notes look identical
     stuck: false,
     stickTried: false,
     life: 30,
@@ -98,7 +107,7 @@ export function spawnBurst(sys, { origin, dir, count = 2, speed = 6.2, rng = Mat
 
 // Ambient rain: notes drift down from above the frame across a range of depths,
 // so some pass in front of the person and some behind.
-export function spawnRain(sys, { cam, count = 1, minZ = 0.5, maxZ = 4.2, rng = Math.random }) {
+export function spawnRain(sys, { cam, count = 1, minZ = 0.9, maxZ = 5, rng = Math.random }) {
   for (let i = 0; i < count; i++) {
     const z = minZ + rng() * (maxZ - minZ);
     const ext = viewExtent(cam, z);
@@ -115,18 +124,6 @@ export function spawnRain(sys, { cam, count = 1, minZ = 0.5, maxZ = 4.2, rng = M
     sys.particles.push(makeBill(p, v, n, t, rng));
   }
   enforceCap(sys);
-}
-
-// A brief muzzle cue at the fingertip.
-export function spawnFlash(sys, origin) {
-  sys.particles.push({
-    kind: 'flash',
-    p: { x: origin.x, y: origin.y, z: origin.z },
-    v: { x: 0, y: 0, z: 0 },
-    r: 0.05,
-    life: 0.07,
-    maxLife: 0.07,
-  });
 }
 
 function enforceCap(sys) {
@@ -225,7 +222,7 @@ function stepBill(p, h, env) {
 }
 
 // Does this note come to rest on the person this frame?
-function tryStick(p, env, rng) {
+function tryStick(sys, p, env, rng) {
   const { cam, personZ, sampleMask } = env;
   if (!sampleMask || personZ == null) return;
   if (Math.abs(p.p.z - personZ) > BODY_SLAB) return;
@@ -239,6 +236,17 @@ function tryStick(p, env, rng) {
   if (p.stickTried) return;
   p.stickTried = true;
 
+  // A note cannot land where one already lies, and a body only holds so many
+  // before the rest slide off. Without this the money stacks into a clump.
+  let nearby = 0;
+  let resting = 0;
+  for (const q of sys.particles) {
+    if (!q.stuck) continue;
+    resting += 1;
+    if (Math.hypot(q.u - u, q.v2 - v) < STUCK_SEPARATION) nearby += 1;
+  }
+  if (nearby > 0 || resting >= MAX_STUCK) return;
+
   // Slow notes settle; fast ones glance off. Upward-facing surfaces (shoulders,
   // head, forearms) hold money, near-vertical ones let it slide away.
   const speed = len(p.v);
@@ -248,15 +256,23 @@ function tryStick(p, env, rng) {
   if (rng() > chance) return;
 
   p.stuck = true;
+  p.top = onTopSurface;
   p.u = u;
   p.v2 = v;
   p.restZ = personZ;
   p.v = { x: 0, y: 0, z: 0 };
   p.w = { x: 0, y: 0, z: 0 };
   p.bias = { x: 0, y: 0, z: 0 };
-  // Lie roughly flat against the body, facing the camera.
-  p.n = normalize({ x: (rng() - 0.5) * 0.5, y: -0.35 - rng() * 0.3, z: -0.8 });
-  p.t = normalize(sub(p.t, scale(p.n, dot(p.n, p.t))));
+
+  // Orientation follows the surface it came to rest on. A note draped over the
+  // top of a head or shoulder lies mostly flat, so from a camera in front of
+  // you it is strongly foreshortened. One caught against your chest faces the
+  // lens. Both get a random roll so no two sit at the same angle.
+  const jitterX = (rng() - 0.5) * 0.6;
+  p.n = onTopSurface
+    ? normalize({ x: jitterX, y: -0.88, z: -0.42 - rng() * 0.3 })
+    : normalize({ x: jitterX, y: -0.28 - rng() * 0.3, z: -0.9 });
+  p.t = rotateAxis(perpendicular(p.n), p.n, rng() * Math.PI * 2);
 }
 
 export function step(sys, dt, env = {}) {
@@ -266,14 +282,10 @@ export function step(sys, dt, env = {}) {
   const hs = h / sub2;
 
   for (const p of sys.particles) {
-    if (p.kind === 'flash') {
-      p.life -= h;
-      continue;
-    }
     if (p.stuck) continue;
     for (let s = 0; s < sub2; s++) stepBill(p, hs, env);
     p.life -= h;
-    tryStick(p, env, rng);
+    tryStick(sys, p, env, rng);
   }
 
   cull(sys, env);

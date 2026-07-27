@@ -104,25 +104,7 @@ export function createRenderer(canvas, options = {}) {
 
 function drawParticle(ctx, cam, p, pos) {
   if (pos.z <= 0.05) return;
-  if (p.kind === 'flash') {
-    drawFlash(ctx, cam, p, pos);
-    return;
-  }
   drawBill(ctx, cam, p, pos);
-}
-
-function drawFlash(ctx, cam, p, pos) {
-  const s = project(cam, pos);
-  const a = Math.max(0, p.life / p.maxLife);
-  const r = Math.max(2, p.r * s.scale * (0.7 + 0.6 * a));
-  const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
-  g.addColorStop(0, `rgba(255,250,220,${0.75 * a})`);
-  g.addColorStop(0.45, `rgba(255,214,110,${0.4 * a})`);
-  g.addColorStop(1, 'rgba(255,190,60,0)');
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
-  ctx.fill();
 }
 
 function drawBill(ctx, cam, p, pos) {
@@ -135,13 +117,25 @@ function drawBill(ctx, cam, p, pos) {
   const c1 = project(cam, { x: pos.x + long.x - short.x, y: pos.y + long.y - short.y, z: pos.z + long.z - short.z });
   const c3 = project(cam, { x: pos.x - long.x + short.x, y: pos.y - long.y + short.y, z: pos.z - long.z + short.z });
 
-  const e1x = c1.x - c0.x;
-  const e1y = c1.y - c0.y;
-  const e2x = c3.x - c0.x;
-  const e2y = c3.y - c0.y;
+  let ox = c0.x;
+  let oy = c0.y;
+  let e1x = c1.x - c0.x;
+  let e1y = c1.y - c0.y;
+  let e2x = c3.x - c0.x;
+  let e2y = c3.y - c0.y;
   const bw = Math.hypot(e1x, e1y);
   const bh = Math.hypot(e2x, e2y);
   if (bw < 1 || bw > 4000) return;
+
+  // A note seen from one side yields a left-handed screen basis, which makes
+  // the canvas mirror everything drawn into it. Re-anchor to the opposite
+  // corner so the artwork is never rendered back to front.
+  if (e1x * e2y - e1y * e2x < 0) {
+    ox = c3.x;
+    oy = c3.y;
+    e2x = -e2x;
+    e2y = -e2y;
+  }
 
   // Distance haze, so deep notes settle into the background.
   const alpha = pos.z > 4 ? Math.max(0.25, 1 - (pos.z - 4) / 7) : 1;
@@ -151,7 +145,7 @@ function drawBill(ctx, cam, p, pos) {
   if (bh < 1.6) {
     ctx.save();
     ctx.globalAlpha = alpha * 0.85;
-    ctx.strokeStyle = '#2f9b64';
+    ctx.strokeStyle = '#b9c2a6';
     ctx.lineWidth = Math.max(1, bh + 0.9);
     ctx.beginPath();
     ctx.moveTo(c0.x, c0.y);
@@ -168,58 +162,112 @@ function drawBill(ctx, cam, p, pos) {
 
   // Lambert shading on the note face, so it glints while tumbling.
   const facing = dot(p.n, LIGHT);
-  const shade = 0.52 + 0.48 * Math.min(1, Math.abs(facing));
+  const shade = 0.55 + 0.45 * Math.min(1, Math.abs(facing));
   // Which side are we looking at?
   const toCam = normalize({ x: -pos.x, y: -pos.y, z: -pos.z });
   const back = dot(p.n, toCam) < 0;
 
+  // Real currency paper is a pale desaturated sage, not a vivid green. Each
+  // note is nudged slightly so a drift of them does not read as clones.
+  const tone = p.tone || 0;
+  const k = shade * (0.94 + tone * 0.12);
+  const paper = back ? rgb(184, 198, 172, k) : rgb(206, 212, 189, k);
+  const ink = back ? rgb(58, 92, 68, k) : rgb(62, 88, 68, k);
+
+  // A note lying on someone casts a small shadow onto them. Without this
+  // contact cue the money reads as pasted over the picture.
+  if (p.stuck) {
+    const off = Math.max(1.5, bw * 0.035);
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.28;
+    ctx.transform(ux, uy, vx, vy, ox + off * 0.5, oy + off);
+    ctx.fillStyle = '#0d1a10';
+    roundRect(ctx, 0, 0, bw, bh, Math.min(bw, bh) * 0.06);
+    ctx.fill();
+    ctx.restore();
+  }
+
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.transform(ux, uy, vx, vy, c0.x, c0.y);
+  ctx.transform(ux, uy, vx, vy, ox, oy);
 
-  const g = ctx.createLinearGradient(0, 0, 0, bh);
-  if (back) {
-    g.addColorStop(0, tint(0x2f, 0x8d, 0x5e, shade));
-    g.addColorStop(1, tint(0x1a, 0x66, 0x42, shade));
-  } else {
-    g.addColorStop(0, tint(0x46, 0xb8, 0x7c, shade));
-    g.addColorStop(1, tint(0x23, 0x82, 0x53, shade));
-  }
-  ctx.fillStyle = g;
-  roundRect(ctx, 0, 0, bw, bh, Math.min(bw, bh) * 0.08);
+  ctx.fillStyle = paper;
+  roundRect(ctx, 0, 0, bw, bh, Math.min(bw, bh) * 0.06);
   ctx.fill();
 
-  if (bw > 26) {
-    ctx.strokeStyle = `rgba(232,255,240,${0.42 * shade})`;
-    ctx.lineWidth = Math.max(0.6, bw * 0.012);
-    roundRect(ctx, bw * 0.05, bh * 0.1, bw * 0.9, bh * 0.8, Math.min(bw, bh) * 0.05);
+  if (bw > 18) {
+    // Engraved border.
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = Math.max(0.5, bw * 0.008);
+    ctx.globalAlpha = alpha * 0.75;
+    roundRect(ctx, bw * 0.045, bh * 0.09, bw * 0.91, bh * 0.82, Math.min(bw, bh) * 0.04);
     ctx.stroke();
-
-    // Portrait oval and denomination, only when big enough to read.
-    ctx.fillStyle = `rgba(240,255,246,${0.16 * shade})`;
-    ctx.beginPath();
-    ctx.ellipse(bw * 0.5, bh * 0.5, bw * 0.13, bh * 0.3, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.globalAlpha = alpha;
   }
 
-  if (bw > 46 && !back) {
-    ctx.fillStyle = `rgba(238,255,244,${0.92 * shade})`;
-    ctx.font = `bold ${Math.round(bh * 0.3)}px Georgia, "Times New Roman", serif`;
-    ctx.textAlign = 'center';
+  if (bw > 34) {
+    if (back) {
+      // Reverse: the engraved hall, a low wide block with a pediment.
+      ctx.fillStyle = rgb(96, 128, 100, k);
+      ctx.globalAlpha = alpha * 0.5;
+      ctx.fillRect(bw * 0.3, bh * 0.42, bw * 0.4, bh * 0.3);
+      ctx.fillRect(bw * 0.45, bh * 0.26, bw * 0.1, bh * 0.18);
+      ctx.globalAlpha = alpha;
+    } else {
+      // Obverse: portrait oval left of centre, seal to the right.
+      ctx.fillStyle = rgb(104, 116, 98, k);
+      ctx.globalAlpha = alpha * 0.55;
+      ctx.beginPath();
+      ctx.ellipse(bw * 0.42, bh * 0.52, bw * 0.115, bh * 0.31, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = alpha * 0.4;
+      ctx.beginPath();
+      ctx.ellipse(bw * 0.63, bh * 0.55, bw * 0.05, bh * 0.15, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = alpha;
+    }
+  }
+
+  // Corner denominations, the way a real note is marked.
+  if (bw > 56) {
+    ctx.fillStyle = ink;
+    ctx.globalAlpha = alpha * 0.85;
+    const fs = Math.max(4, Math.round(bh * 0.17));
+    ctx.font = `${fs}px Georgia, "Times New Roman", serif`;
     ctx.textBaseline = 'middle';
-    ctx.fillText('$100', bw * 0.24, bh * 0.5);
+    ctx.textAlign = 'left';
+    ctx.fillText('100', bw * 0.08, bh * 0.2);
+    ctx.textAlign = 'right';
+    ctx.fillText('100', bw * 0.92, bh * 0.8);
+    ctx.globalAlpha = alpha;
   }
 
-  // A soft sheen across the upper half sells the paper.
-  ctx.fillStyle = `rgba(255,255,255,${0.1 * shade})`;
-  roundRect(ctx, 0, 0, bw, bh * 0.42, Math.min(bw, bh) * 0.06);
+  // Fine engraving lines only once the note is large enough to show them.
+  if (bw > 90) {
+    ctx.strokeStyle = ink;
+    ctx.globalAlpha = alpha * 0.18;
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    for (let i = 1; i <= 3; i++) {
+      const y = bh * (0.2 + i * 0.16);
+      ctx.moveTo(bw * 0.08, y);
+      ctx.lineTo(bw * 0.34, y);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = alpha;
+  }
+
+  // A faint sheen across the top, which is how paper catches the light.
+  ctx.fillStyle = `rgba(255,255,255,${0.07 * shade})`;
+  roundRect(ctx, 0, 0, bw, bh * 0.4, Math.min(bw, bh) * 0.05);
   ctx.fill();
 
   ctx.restore();
 }
 
-function tint(r, g, b, k) {
-  return `rgb(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)})`;
+function rgb(r, g, b, k) {
+  const c = (v) => Math.max(0, Math.min(255, Math.round(v * k)));
+  return `rgb(${c(r)},${c(g)},${c(b)})`;
 }
 
 function roundRect(ctx, x, y, w, h, r) {

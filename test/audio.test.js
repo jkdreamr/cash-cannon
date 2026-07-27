@@ -36,8 +36,8 @@ describe('createAudio', () => {
     const ctx = fakeCtx();
     const audio = createAudio(() => ctx);
     audio.fire();
-    expect(ctx.calls.osc).toBeGreaterThanOrEqual(1);
-    expect(ctx.calls.buf).toBe(1);
+    expect(ctx.calls.osc).toBeGreaterThanOrEqual(1); // cash register bells
+    expect(ctx.calls.buf).toBeGreaterThanOrEqual(1); // layered paper riffle
   });
 
   test('muting prevents sound generation', () => {
