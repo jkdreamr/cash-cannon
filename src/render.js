@@ -124,7 +124,7 @@ function hairline(ctx, ax, ay, bx, by, thickness, alpha) {
 // A real camera records that as a streak; drawing a single hard copy instead
 // makes the money look like it pops into existence away from the hand. These
 // are the intermediate positions the note actually occupied during the frame.
-const GHOSTS = [0.66, 0.33];
+const GHOSTS = [0.75, 0.5, 0.25];
 
 function drawNote(ctx, cam, p, pos, sheet, dt) {
   if (p.stuck || !dt || !p.v) {
@@ -180,17 +180,21 @@ function drawBill(ctx, cam, p, pos, sheet, fade = 1) {
   // Distance haze, so deep notes settle into the background.
   const alpha = (pos.z > 4 ? Math.max(0.25, 1 - (pos.z - 4) / 7) : 1) * fade;
 
-  // Edge-on either way: the note is a paper edge, not a surface. Both axes need
-  // handling or a note turned side-on to the lens would vanish entirely.
-  if (bh < 1.6 && bw >= 1.6) {
-    hairline(ctx, c0.x, c0.y, c1.x, c1.y, bh, alpha * 0.85);
+  // Turning edge-on, the note becomes its own paper edge. Banknote stock is
+  // 0.11 mm thick, which is a quarter of a pixel even at arm's length, so a
+  // note square-on to the lens genuinely disappears rather than becoming a
+  // crisp line. Fading it out as it closes up gives the flicker real money has
+  // while it tumbles, instead of leaving hard slivers lying about the frame.
+  const FADE = 4;
+  if (bh < FADE && bw >= FADE) {
+    hairline(ctx, c0.x, c0.y, c1.x, c1.y, bh, alpha * 0.7 * (bh / FADE));
     return;
   }
-  if (bw < 1.6 && bh >= 1.6) {
-    hairline(ctx, c0.x, c0.y, c3.x, c3.y, bw, alpha * 0.85);
+  if (bw < FADE && bh >= FADE) {
+    hairline(ctx, c0.x, c0.y, c3.x, c3.y, bw, alpha * 0.7 * (bw / FADE));
     return;
   }
-  if (bw < 1.6 && bh < 1.6) return;
+  if (bw < FADE && bh < FADE) return;
 
   // A note seen from one side yields a left-handed screen basis, which makes
   // the canvas mirror everything drawn into it. Re-anchor to the opposite

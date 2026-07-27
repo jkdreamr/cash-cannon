@@ -3,13 +3,20 @@ import { classifyHand, jointAngleDeg } from '../src/gesture.js';
 
 // 21 MediaPipe landmarks carrying x, y and z (world-style). The classifier uses
 // z for the finger-shape angles, and x/y for aim + tip position.
-function gunHand({ forward = false } = {}) {
+function gunHand({ forward = false, thumb = 'up' } = {}) {
   const lm = new Array(21);
   lm[0] = { x: 0.50, y: 0.90, z: 0 };   // wrist
-  lm[1] = { x: 0.42, y: 0.82, z: 0 };   // thumb (ignored by the classifier)
-  lm[2] = { x: 0.40, y: 0.74, z: 0 };
-  lm[3] = { x: 0.36, y: 0.70, z: 0 };
-  lm[4] = { x: 0.30, y: 0.66, z: 0 };
+  lm[1] = { x: 0.44, y: 0.82, z: 0 };   // thumb CMC
+  lm[2] = { x: 0.42, y: 0.74, z: 0 };   // thumb MCP
+  if (thumb === 'up') {
+    // Straight and cocked out to the side, clear of the barrel.
+    lm[3] = { x: 0.34, y: 0.70, z: 0 };
+    lm[4] = { x: 0.26, y: 0.66, z: 0 };
+  } else {
+    // Laid back alongside the index finger, pointing the same way it does.
+    lm[3] = { x: 0.44, y: 0.66, z: 0 };
+    lm[4] = { x: 0.46, y: 0.58, z: 0 };
+  }
   if (forward) {
     // Index points toward the camera: barely moves in x/y (foreshortened) but
     // travels in z, so it is straight in 3D and bent-looking in 2D.
@@ -71,6 +78,19 @@ describe('classifyHand', () => {
     const h = classifyHand(gunHand());
     expect(h.aim.y).toBeLessThan(-0.9);
     expect(Math.abs(h.aim.x)).toBeLessThan(0.1);
+  });
+
+  test('reads the thumb as the hammer: up is clear of the barrel, down is not', () => {
+    const up = classifyHand(gunHand({ thumb: 'up' }));
+    const down = classifyHand(gunHand({ thumb: 'down' }));
+
+    // The barrel is unchanged either way; only the hammer differs.
+    expect(up.isGunShape).toBe(true);
+    expect(down.isGunShape).toBe(true);
+
+    expect(up.thumbAngle).toBeGreaterThan(50);
+    expect(down.thumbAngle).toBeLessThan(35);
+    expect(up.thumbStraight).toBe(true);
   });
 
   test('detects a gun pointing toward the camera, where 2D distance fails', () => {

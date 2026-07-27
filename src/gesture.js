@@ -36,6 +36,22 @@ export function fingerExtended(lm, mcp, pip, tip) {
   return jointAngleDeg(lm, mcp, pip, tip) >= EXTENDED_ANGLE;
 }
 
+// Vector between two landmarks, in 3D when the source has depth.
+function between(lm, a, b) {
+  const p = lm[a];
+  const q = lm[b];
+  return { x: q.x - p.x, y: q.y - p.y, z: (q.z || 0) - (p.z || 0) };
+}
+
+function angleDeg(a, b) {
+  const la = Math.hypot(a.x, a.y, a.z);
+  const lb = Math.hypot(b.x, b.y, b.z);
+  if (la < 1e-9 || lb < 1e-9) return 0;
+  let c = (a.x * b.x + a.y * b.y + a.z * b.z) / (la * lb);
+  c = Math.max(-1, Math.min(1, c));
+  return (Math.acos(c) * 180) / Math.PI;
+}
+
 // screenLm: 2D landmarks in a consistent space, used for tip position + aim.
 // shapeLm : 3D landmarks (MediaPipe worldLandmarks) used for the finger-shape
 //           test; defaults to screenLm so callers/tests can pass one array.
@@ -45,15 +61,27 @@ export function classifyHand(screenLm, shapeLm = screenLm) {
   const ringExtended = fingerExtended(shapeLm, LM.RING_MCP, LM.RING_PIP, LM.RING_TIP);
   const pinkyExtended = fingerExtended(shapeLm, LM.PINKY_MCP, LM.PINKY_PIP, LM.PINKY_TIP);
 
-  // Gun = index barrel out, the other three fingers folded. Thumb is ignored
-  // (holding the gun shape fires continuously; no cock needed).
+  // The barrel: index out, the other three folded.
   const isGunShape = indexExtended && !middleExtended && !ringExtended && !pinkyExtended;
+
+  // The hammer. A raised thumb is straight at its own joint AND cocked away
+  // from the barrel; laid alongside the index it is neither. Both parts are
+  // needed, since a bent thumb tucked into the palm can still happen to point
+  // away from the finger.
+  const thumbStraight =
+    jointAngleDeg(shapeLm, LM.THUMB_MCP, LM.THUMB_IP, LM.THUMB_TIP) >= 125;
+  const thumbAngle = angleDeg(
+    between(shapeLm, LM.THUMB_MCP, LM.THUMB_TIP),
+    between(shapeLm, LM.INDEX_MCP, LM.INDEX_TIP)
+  );
 
   const aimVec = sub(screenLm[LM.INDEX_TIP], screenLm[LM.INDEX_MCP]);
   const aimMag = Math.hypot(aimVec.x, aimVec.y);
 
   return {
     isGunShape,
+    thumbStraight,
+    thumbAngle, // degrees away from the barrel; large when the thumb is up
     tip: { x: screenLm[LM.INDEX_TIP].x, y: screenLm[LM.INDEX_TIP].y },
     aim: normalize(aimVec),
     aimMag, // small when the finger points at/away from the camera
