@@ -148,10 +148,13 @@ export function createBodyTracker() {
       // skin or cloth and the crown keeps money readily. Falling money reaches
       // the head first, so this needs to be a real target, not a sliver. The
       // silhouette mask still clips it to the actual head.
+      // A head is about 0.565 shoulder-widths tall and the hairline sits
+      // roughly a quarter of the way down from the top, so the band has to stay
+      // inside that or it reaches a forehead and then a pair of eyes.
       if (j.nose && visible(j.nose)) {
         const headTop = j.nose.y - w * 0.31;
-        const onCrown = v > headTop - w * 0.14 && v < headTop + w * 0.18;
-        if (onCrown && Math.abs(u - j.nose.x) < w * 0.28) {
+        const onCrown = v > headTop - w * 0.12 && v < headTop + w * 0.10;
+        if (onCrown && Math.abs(u - j.nose.x) < w * 0.24) {
           return { kind: 'head', hold: 1 };
         }
       }

@@ -322,15 +322,21 @@ function tryStick(sys, p, env, rng) {
     if (!site) return; // steeper than the friction angle, it slides off
     hold = site.hold;
   } else {
-    // Without body tracking, fall back to the silhouette's upper boundary as a
-    // proxy for an upward-facing surface.
-    hold = !sampleMask(u, v - 0.035) ? 1 : 0.12;
+    // Without body tracking, the only surface we can identify is the upper
+    // boundary of the silhouette, which is the top of a head or a shoulder.
+    // Everything inside that outline is a front-facing surface like a chest or
+    // a face, far steeper than paper can hold on, so it takes nothing at all.
+    // Giving the interior even a small chance is what put notes on a face.
+    hold = sampleMask(u, v - 0.035) ? 0 : 1;
   }
+  if (hold <= 0) return;
 
-  // Slow notes settle; fast ones glance off.
+  // Slow notes settle; fast ones glance off. The floor here must stay below
+  // `hold`, or a surface that holds nothing would still catch the occasional
+  // note.
   const speed = len(p.v);
-  const chance = clamp((1.05 - speed / 4) * hold, 0.02, 0.94);
-  if (rng() > chance) return;
+  const chance = clamp((1.05 - speed / 4) * hold, 0, 0.94);
+  if (chance <= 0 || rng() > chance) return;
 
   const onTopSurface = hold > 0.5;
   p.stuck = true;

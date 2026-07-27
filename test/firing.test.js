@@ -3,11 +3,11 @@ import { createHandFiringState, updateFiring } from '../src/firing.js';
 
 const GUN = { isGunShape: true, tip: { x: 1, y: 2 }, aim: { x: 0, y: -1 }, aimMag: 0.3 };
 const NOGUN = { isGunShape: false };
-// A real finger gun: barrel out with the thumb up. Measured poses give about
-// 63 degrees with the hammer up and 14 with it laid back.
-const gun = (thumbAngle, thumbStraight = true) => ({ ...GUN, thumbAngle, thumbStraight });
-const THUMB_UP = gun(63);
-const THUMB_DOWN = gun(14);
+// A real finger gun: barrel out with the thumb up. Measured poses give a gap of
+// about 1.1 knuckle spans with the hammer up and 0.2 with it laid back.
+const gun = (thumbGap) => ({ ...GUN, thumbGap });
+const THUMB_UP = gun(1.1);
+const THUMB_DOWN = gun(0.21);
 
 describe('updateFiring (continuous)', () => {
   test('fires immediately when the gun appears', () => {
@@ -82,21 +82,21 @@ describe('updateFiring (continuous)', () => {
     let now = 0;
     // Inside the hysteresis band from a standing start: still not cocked.
     for (let i = 0; i < 10; i++) {
-      expect(updateFiring(s, gun(42), (now += 16)).didFire).toBe(false);
+      expect(updateFiring(s, gun(0.58), (now += 16)).didFire).toBe(false);
     }
     // Once genuinely up, drifting back into the band keeps it firing.
     updateFiring(s, THUMB_UP, (now += 16));
     let fired = 0;
     for (let i = 0; i < 10; i++) {
-      if (updateFiring(s, gun(42), (now += 16)).didFire) fired++;
+      if (updateFiring(s, gun(0.58), (now += 16)).didFire) fired++;
     }
     expect(fired).toBeGreaterThan(0);
   });
 
-  test('a bent thumb tucked into the palm is not a raised hammer', () => {
+  test('a thumb folded into the palm is not a raised hammer', () => {
     const s = createHandFiringState();
-    // Pointing away from the barrel, but folded rather than straight.
-    expect(updateFiring(s, gun(70, false), 1000).didFire).toBe(false);
+    // Curled in against the hand, so its tip sits close to the barrel.
+    expect(updateFiring(s, gun(0.35), 1000).didFire).toBe(false);
   });
 
   test('losing the gun resets the hammer, so it cannot resume mid-stream', () => {
