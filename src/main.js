@@ -9,6 +9,11 @@ const MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
 
+// Detection is synchronous and heavy, so we run it on a throttle and reuse the
+// last result between runs. Rendering still happens every frame, which keeps
+// the camera feed smooth instead of freezing while inference runs.
+const DETECT_INTERVAL_MS = 55;
+
 const el = (id) => document.getElementById(id);
 const canvas = el('feed');
 const video = el('cam');
@@ -29,6 +34,10 @@ let lastTs = 0;
 let shakeMag = 0;
 let lastChaChingMs = 0; // throttle the cash-register bells during continuous fire
 let fireCount = 0;      // used to eject a shell casing every few shots
+let lastDetectMs = 0;   // detection throttle clock
+let lastHands = [];     // most recent detection, reused between throttled runs
+let lastWorld = [];
+let lastLabels = [];
 const shake = { x: 0, y: 0 };
 
 function showError(msg) {
@@ -40,7 +49,7 @@ function hideError() {
 }
 
 function resizeCanvas() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
   canvas.width = Math.floor(window.innerWidth * dpr);
   canvas.height = Math.floor(window.innerHeight * dpr);
 }
@@ -129,18 +138,29 @@ function loop(ts) {
   const h = canvas.height;
   const bounds = { width: w, height: h };
 
-  // Detect only when the video advanced to a new frame.
-  let hands = [];
-  let worldHands = [];
-  let labels = [];
-  if (video.currentTime !== lastVideoTime) {
+  // Run detection on a throttle and only on a fresh video frame, so heavy
+  // inference never blocks the render loop. The last result is reused between
+  // runs; the feed keeps painting every frame.
+  if (
+    ts - lastDetectMs >= DETECT_INTERVAL_MS &&
+    video.readyState >= 2 &&
+    video.currentTime !== lastVideoTime
+  ) {
+    lastDetectMs = ts;
     lastVideoTime = video.currentTime;
-    const res = landmarker.detectForVideo(video, ts);
-    hands = res.landmarks || [];
-    worldHands = res.worldLandmarks || [];
-    const handed = res.handednesses || res.handedness || [];
-    labels = hands.map((_, i) => handed[i]?.[0]?.categoryName || `h${i}`);
+    try {
+      const res = landmarker.detectForVideo(video, ts);
+      lastHands = res.landmarks || [];
+      lastWorld = res.worldLandmarks || [];
+      const handed = res.handednesses || res.handedness || [];
+      lastLabels = lastHands.map((_, i) => handed[i]?.[0]?.categoryName || `h${i}`);
+    } catch (err) {
+      // A single bad inference frame must not kill the animation loop.
+    }
   }
+  const hands = lastHands;
+  const worldHands = lastWorld;
+  const labels = lastLabels;
 
   const seen = new Set();
   const status = [];

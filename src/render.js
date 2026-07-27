@@ -1,6 +1,18 @@
 const BILL_W = 84;
 const BILL_H = 40;
 
+// The bill gradient is identical for every bill (local, origin-centred space),
+// so build it once and reuse it instead of allocating one per bill per frame.
+let billGrad = null;
+function billGradient(ctx) {
+  if (!billGrad) {
+    billGrad = ctx.createLinearGradient(0, -BILL_H / 2, 0, BILL_H / 2);
+    billGrad.addColorStop(0, '#3aa76d');
+    billGrad.addColorStop(1, '#1f7a4d');
+  }
+  return billGrad;
+}
+
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
 
@@ -79,10 +91,7 @@ function drawParticle(ctx, p) {
   if (Math.abs(sx) < 0.12) sx = 0.12 * (sx < 0 ? -1 : 1);
   ctx.scale(sx, 1);
 
-  const g = ctx.createLinearGradient(0, -BILL_H / 2, 0, BILL_H / 2);
-  g.addColorStop(0, '#3aa76d');
-  g.addColorStop(1, '#1f7a4d');
-  ctx.fillStyle = g;
+  ctx.fillStyle = billGradient(ctx);
   roundRect(ctx, -BILL_W / 2, -BILL_H / 2, BILL_W, BILL_H, 6);
   ctx.fill();
 

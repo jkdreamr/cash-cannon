@@ -2,7 +2,7 @@ import { rotate } from './vec.js';
 
 const GRAVITY = 2000;        // px/s^2
 const DRAG = 0.55;           // fraction of velocity retained per second
-export const MAX_PARTICLES = 400;
+export const MAX_PARTICLES = 260;
 
 export function createSystem() {
   return { particles: [] };
