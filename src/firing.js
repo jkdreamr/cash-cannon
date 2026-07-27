@@ -1,4 +1,7 @@
-const DEFAULTS = { fireIntervalMs: 70, graceFrames: 5 };
+// A real money gun quotes 10 to 20 notes per second. This sits at the top of
+// that range, which is also what keeps the stream visually continuous from the
+// fingertip rather than arriving as separate pops.
+const DEFAULTS = { fireIntervalMs: 50, graceFrames: 5 };
 
 export function createHandFiringState() {
   return { firing: false, lostFrames: 0, lastFireMs: -Infinity };

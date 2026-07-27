@@ -137,10 +137,16 @@ export function createBodyTracker() {
         }
       }
 
-      // Top of the head. Hair interlocks with paper, so it holds well.
+      // The crown only. Shoulder breadth is about 1.77 head heights, and the
+      // nose sits roughly 55% down the face, which puts the top of the head
+      // about 0.31 shoulder-widths above it. Money rests on that crown and on
+      // nothing below it: a forehead is already too steep, and a face holds
+      // nothing at all. Allowing the whole head is what pasted notes across
+      // the middle of a face.
       if (j.nose && visible(j.nose)) {
-        const headTop = j.nose.y - w * 0.42;
-        if (Math.abs(u - j.nose.x) < w * 0.34 && v > headTop - w * 0.3 && v < j.nose.y - w * 0.05) {
+        const headTop = j.nose.y - w * 0.31;
+        const onCrown = v > headTop - w * 0.11 && v < headTop + w * 0.12;
+        if (onCrown && Math.abs(u - j.nose.x) < w * 0.26) {
           return { kind: 'head', hold: 0.95 };
         }
       }

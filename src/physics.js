@@ -92,8 +92,13 @@ function makeBill(p, v, n, t, rng) {
 // and shears it off the stack, so notes leave one at a time, short edge first
 // (knife-on to the airflow), and because the drive friction acts off the note's
 // mid-plane every note leaves tumbling end over end about its short axis.
+// muzzleOffset is deliberately tiny. It is a world-space distance, and close to
+// the lens a small offset is an enormous number of pixels: 0.10 m at a hand
+// 0.55 m away throws the note 273 px clear of the fingertip, which reads as
+// money appearing out of thin air rather than leaving the finger.
 export function spawnBurst(sys, {
-  origin, dir, count = 1, speed = 3.6, muzzleOffset = 0.1, rng = Math.random,
+  origin, dir, count = 1, speed = 2.0, muzzleOffset = 0.02, preAdvance = 0,
+  rng = Math.random,
 }) {
   const d = normalize(dir);
   if (len(d) < 0.5) return;
@@ -125,6 +130,16 @@ export function spawnBurst(sys, {
     const rate = (2 + rng() * 8) * Math.PI * 2 * (rng() < 0.5 ? -1 : 1);
     bill.w = { x: axis.x * rate, y: axis.y * rate, z: axis.z * rate };
     bill.bias = { x: bill.bias.x * 0.3, y: bill.bias.y * 0.3, z: bill.bias.z * 0.3 };
+
+    // Notes leave continuously, not in lockstep with the render frames. Nudging
+    // each one along its own path by a fraction of a frame spreads the stream
+    // out instead of stamping it at frame boundaries.
+    if (preAdvance > 0) {
+      bill.p.x += bill.v.x * preAdvance;
+      bill.p.y += bill.v.y * preAdvance;
+      bill.p.z += bill.v.z * preAdvance;
+    }
+
     sys.particles.push(bill);
   }
   enforceCap(sys);
@@ -132,7 +147,7 @@ export function spawnBurst(sys, {
 
 // Ambient rain: notes drift down from above the frame across a range of depths,
 // so some pass in front of the person and some behind.
-export function spawnRain(sys, { cam, count = 1, minZ = 0.9, maxZ = 5, focusZ = null, rng = Math.random }) {
+export function spawnRain(sys, { cam, count = 1, minZ = 1.15, maxZ = 5, focusZ = null, rng = Math.random }) {
   for (let i = 0; i < count; i++) {
     let z;
     if (focusZ != null) {
@@ -331,9 +346,13 @@ function tryStick(sys, p, env, rng) {
   // top of a head or shoulder lies mostly flat, so from a camera in front of
   // you it is strongly foreshortened. One caught against your chest faces the
   // lens. Both get a random roll so no two sit at the same angle.
-  const jitterX = (rng() - 0.5) * 0.6;
+  // A note lying on a shoulder or a crown has its face pointing almost
+  // straight up, so from a camera in front of you it is strongly foreshortened.
+  // Tilting it toward the lens is what made resting money look like a sticker
+  // hovering in front of the body rather than lying on it.
+  const jitterX = (rng() - 0.5) * 0.4;
   p.n = onTopSurface
-    ? normalize({ x: jitterX, y: -0.88, z: -0.42 - rng() * 0.3 })
+    ? normalize({ x: jitterX, y: -0.93, z: -0.22 - rng() * 0.18 })
     : normalize({ x: jitterX, y: -0.28 - rng() * 0.3, z: -0.9 });
   p.t = rotateAxis(perpendicular(p.n), p.n, rng() * Math.PI * 2);
 }

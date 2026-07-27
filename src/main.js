@@ -37,7 +37,7 @@ const KNUCKLE_SPAN_M = 0.08;
 // A hand naturally sits about 0.4 m from a webcam, where a note would render a
 // third of the frame wide. Treating anything nearer as this far keeps notes a
 // legible size without moving where they leave the fingertip on screen.
-const MIN_MUZZLE_Z = 0.55;
+const MIN_MUZZLE_Z = 0.7;
 const MAX_MUZZLE_Z = 4;
 
 const el = (id) => document.getElementById(id);
@@ -370,7 +370,7 @@ function loop(ts) {
 
     if (r.didFire) {
       // A real gun sheds one note at a time; the cadence supplies the stream.
-      spawnBurst(system, { origin: tip3, dir, count: 1 });
+      spawnBurst(system, { origin: tip3, dir, count: 1, preAdvance: Math.random() * dt });
       audio.shot();
       if (ts - lastChaChingMs > 380) {
         audio.chaChing();
@@ -409,6 +409,7 @@ function loop(ts) {
     video,
     cam,
     particles: system.particles,
+    dt,
     personStencil: person.present ? person.canvas : null,
     personZ: person.present ? personZ : null,
     shake,
