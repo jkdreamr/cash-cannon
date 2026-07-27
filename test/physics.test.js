@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { createSystem, spawnBurst, step, MAX_PARTICLES } from '../src/physics.js';
+import { createSystem, spawnBurst, spawnRain, step, MAX_PARTICLES } from '../src/physics.js';
 
 const TIP = { x: 100, y: 100 };
 const AIM = { x: 1, y: 0 };
@@ -26,6 +26,21 @@ describe('physics', () => {
     expect(count(sys, 'bill')).toBe(2);
     expect(count(sys, 'shell')).toBe(0);
     expect(count(sys, 'flash')).toBe(1); // flash still fires each shot
+  });
+
+  test('spawnRain drops bills from above the top that fall at a capped speed', () => {
+    const sys = createSystem();
+    spawnRain(sys, { width: 1000, count: 3, rng: () => 0.5 });
+    const rainBills = sys.particles.filter((p) => p.kind === 'bill' && p.rain);
+    expect(rainBills.length).toBe(3);
+    expect(rainBills[0].y).toBeLessThan(0); // starts above the top edge
+
+    for (let i = 0; i < 120; i++) step(sys, 1 / 60, { width: 1000, height: 800 });
+    const p = sys.particles.find((x) => x.rain);
+    if (p) {
+      expect(p.vy).toBeLessThanOrEqual(341); // gentle terminal fall, not gun-fire ballistics
+      expect(p.y).toBeGreaterThan(0);         // has fallen into view
+    }
   });
 
   test('gravity accelerates a particle downward', () => {

@@ -48,6 +48,22 @@
       #sound.muted { color: rgba(234, 255, 241, 0.55); }
       #sound.muted .ic-on { display: none; }
       #sound.muted .ic-off { display: block; }
+
+      /* "Make it rain" toggle */
+      #rain {
+        position: fixed; top: 14px; left: 14px; z-index: 5;
+        display: none; align-items: center; min-height: 44px; padding: 0 18px;
+        border-radius: 999px; cursor: pointer; font: inherit; font-weight: 600; font-size: 14px;
+        color: var(--ink); border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(6, 22, 13, 0.5); backdrop-filter: blur(8px);
+        transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+      }
+      #rain:hover { border-color: rgba(255, 255, 255, 0.4); }
+      #rain:focus-visible { outline: 3px solid #f2d98a; outline-offset: 3px; }
+      #rain.on {
+        color: #06180e; border-color: transparent; font-weight: 700;
+        background: linear-gradient(180deg, #8ff2b5, var(--green) 55%, #1f9e5e);
+      }
     </style>
   </head>
   <body>
@@ -67,8 +83,10 @@
       </svg>
     </button>
 
+    <button id="rain" type="button" aria-pressed="false" aria-label="Toggle money rain">Make it rain</button>
+
     <div id="start" class="gate">
-      <p id="hint" class="hint">Make a finger gun and hold the shape to make it rain. Point to aim.</p>
+      <p id="hint" class="hint">Make a finger gun and hold the shape to shoot cash. Point to aim.</p>
       <button id="startBtn" class="btn" type="button">Start camera</button>
     </div>
 
