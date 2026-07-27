@@ -92,12 +92,13 @@ function makeBill(p, v, n, t, rng) {
 // and shears it off the stack, so notes leave one at a time, short edge first
 // (knife-on to the airflow), and because the drive friction acts off the note's
 // mid-plane every note leaves tumbling end over end about its short axis.
-// muzzleOffset is deliberately tiny. It is a world-space distance, and close to
-// the lens a small offset is an enormous number of pixels: 0.10 m at a hand
-// 0.55 m away throws the note 273 px clear of the fingertip, which reads as
-// money appearing out of thin air rather than leaving the finger.
+// Notes leave from the fingertip itself. muzzleOffset is a world-space distance
+// and close to the lens even a small one is a lot of pixels: 0.10 m at a hand
+// 0.7 m away puts the note 214 px clear of the finger before it is ever drawn,
+// which reads as money appearing from thin air. At zero the note straddles the
+// fingertip as it leaves, which is what emerging from the barrel looks like.
 export function spawnBurst(sys, {
-  origin, dir, count = 1, speed = 2.0, muzzleOffset = 0.02, preAdvance = 0,
+  origin, dir, count = 1, speed = 1.8, muzzleOffset = 0, preAdvance = 0,
   rng = Math.random,
 }) {
   const d = normalize(dir);

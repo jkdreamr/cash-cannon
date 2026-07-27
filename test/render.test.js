@@ -7,10 +7,12 @@ const cam = createCamera(1280, 720);
 function fakeCtx() {
   const calls = { clearRect: 0, fill: 0, drawImage: 0, stroke: 0, fillText: 0, transform: 0 };
   const transforms = [];
+  const alphas = [];
   const grad = { addColorStop() {} };
   return {
     calls,
     transforms,
+    alphas,
     setTransform() {},
     transform(a, b, c, d, e, f) { calls.transform++; transforms.push([a, b, c, d, e, f]); },
     clearRect() { calls.clearRect++; },
@@ -24,7 +26,7 @@ function fakeCtx() {
     createLinearGradient() { return grad; },
     createRadialGradient() { return grad; },
     set fillStyle(_) {}, set strokeStyle(_) {}, set lineWidth(_) {},
-    set globalAlpha(_) {}, set font(_) {}, set textAlign(_) {}, set textBaseline(_) {},
+    set globalAlpha(a) { alphas.push(a); }, set font(_) {}, set textAlign(_) {}, set textBaseline(_) {},
     set globalCompositeOperation(_) {}, set imageSmoothingEnabled(_) {},
   };
 }
@@ -104,6 +106,24 @@ describe('renderer', () => {
       shake: { x: 0, y: 0 },
     });
     expect(canvas.ctx.calls.stroke).toBeGreaterThan(0);
+  });
+
+  test('a note fades out as it turns edge-on, the way real paper does', () => {
+    // Banknote stock is 0.11 mm thick, a quarter of a pixel even at arm's
+    // length, so a note square-on to the lens is invisible rather than a crisp
+    // line. The closer to edge-on, the fainter it must be drawn.
+    const faintest = (nz) => {
+      const canvas = fakeCanvas();
+      const r = renderer(canvas);
+      // Tilt the face progressively toward edge-on with the viewer.
+      const n = { x: 0, y: Math.sqrt(1 - nz * nz), z: nz };
+      r.draw({ video, cam, particles: [bill({ x: 0, y: 0, z: 4 }, { n, t: { x: 1, y: 0, z: 0 } })], shake: { x: 0, y: 0 } });
+      return Math.min(...canvas.ctx.alphas);
+    };
+    const nearlyEdge = faintest(0.02); // almost perfectly edge-on
+    const partlyOpen = faintest(0.20);
+    expect(nearlyEdge).toBeLessThan(partlyOpen);
+    expect(nearlyEdge).toBeLessThan(0.2);
   });
 
   test('with a person stencil the cut-out is composited for occlusion', () => {

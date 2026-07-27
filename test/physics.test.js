@@ -4,6 +4,7 @@ import {
   carryStuck, shakeStuck, knockStuck, countStuck, stuckWorld, MAX_PARTICLES,
 } from '../src/physics.js';
 import { createCamera, project } from '../src/camera3d.js';
+import { createBodyTracker, PL } from '../src/pose.js';
 import { len } from '../src/vec3.js';
 
 const cam = createCamera(1280, 720);
@@ -239,26 +240,32 @@ describe('landing on the person', () => {
     expect(Math.abs(onTop.n.y)).toBeGreaterThan(Math.abs(onTop.n.z) * 2);
   });
 
-  test('money only comes to rest where a body can hold it, never on the face', () => {
-    // A stand-in body: crown above, shoulders below, face in between.
-    const SH = { ax: 0.32, bx: 0.60, y: 0.62 };
-    const noseX = (SH.ax + SH.bx) / 2;
-    const bw = SH.bx - SH.ax;
-    const headTop = 0.4 - bw * 0.31;
+  test('money comes to rest on the head and shoulders, and never on the face', () => {
+    // Drive the real body tracker from synthetic pose landmarks, so this
+    // covers where pose.js actually allows money to settle.
+    const noseX = 0.48;
+    const noseY = 0.4;
+    const shoulderY = 0.66;
+    const lm = [];
+    for (let i = 0; i < 33; i++) lm.push({ x: 0.5, y: 0.5, visibility: 0 });
+    const put = (i, screenX, y) => { lm[i] = { x: 1 - screenX, y, visibility: 0.99 }; };
+    put(PL.R_SHOULDER, 0.33, shoulderY);
+    put(PL.L_SHOULDER, 0.63, shoulderY);
+    put(PL.NOSE, noseX, noseY);
+
+    const body = createBodyTracker();
+    body.update([lm]);
+    expect(body.present).toBe(true);
+
+    const bw = body.basis.width;
+    const headTop = noseY - bw * 0.31;
     const env = {
       cam, wind: true, time: 0, personZ: 1.5,
-      sampleMask: () => true,
-      stickTest: (u, v) => {
-        for (const sx of [SH.ax, SH.bx]) {
-          if (Math.hypot(u - sx, v - SH.y) < bw * 0.3 && v < SH.y + bw * 0.16) {
-            return { kind: 'shoulder', hold: 1 };
-          }
-        }
-        if (v > headTop - bw * 0.11 && v < headTop + bw * 0.12 && Math.abs(u - noseX) < bw * 0.26) {
-          return { kind: 'head', hold: 0.95 };
-        }
-        return null;
-      },
+      // Head and torso silhouette, so nothing settles beside the body.
+      sampleMask: (u, v) =>
+        (Math.abs(u - noseX) < bw * 0.3 && v > headTop - bw * 0.05 && v < shoulderY)
+        || (u > 0.27 && u < 0.69 && v >= shoulderY),
+      stickTest: (u, v) => body.stickTest(u, v),
     };
 
     const sys = createSystem();
@@ -287,9 +294,16 @@ describe('landing on the person', () => {
       expect(env.stickTest(p.u, p.v2)).not.toBe(null);
     }
 
+    // Falling money reaches the head first, and hair holds paper better than
+    // anything else on a person, so the crown must be a real resting place.
+    const sites = new Set(resting.map((p) => p.site));
+    expect(sites.has('head')).toBe(true);
+    expect(sites.has('shoulder')).toBe(true);
+
     // And the middle of the face, which holds nothing in reality, holds
     // nothing here either.
-    expect(env.stickTest(noseX, 0.44)).toBe(null);
+    expect(env.stickTest(noseX, 0.5)).toBe(null);
+    expect(env.stickTest(noseX, 0.58)).toBe(null);
   });
 
   test('resting notes ride along when the person moves', () => {

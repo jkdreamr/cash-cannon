@@ -143,11 +143,16 @@ export function createBodyTracker() {
       // nothing below it: a forehead is already too steep, and a face holds
       // nothing at all. Allowing the whole head is what pasted notes across
       // the middle of a face.
+      // Hair is the best holding surface on a person: paper interlocks with it
+      // rather than merely resting, so the effective friction is higher than
+      // skin or cloth and the crown keeps money readily. Falling money reaches
+      // the head first, so this needs to be a real target, not a sliver. The
+      // silhouette mask still clips it to the actual head.
       if (j.nose && visible(j.nose)) {
         const headTop = j.nose.y - w * 0.31;
-        const onCrown = v > headTop - w * 0.11 && v < headTop + w * 0.12;
-        if (onCrown && Math.abs(u - j.nose.x) < w * 0.26) {
-          return { kind: 'head', hold: 0.95 };
+        const onCrown = v > headTop - w * 0.14 && v < headTop + w * 0.18;
+        if (onCrown && Math.abs(u - j.nose.x) < w * 0.28) {
+          return { kind: 'head', hold: 1 };
         }
       }
 

@@ -3,6 +3,11 @@ import { createHandFiringState, updateFiring } from '../src/firing.js';
 
 const GUN = { isGunShape: true, tip: { x: 1, y: 2 }, aim: { x: 0, y: -1 }, aimMag: 0.3 };
 const NOGUN = { isGunShape: false };
+// A real finger gun: barrel out with the thumb up. Measured poses give about
+// 63 degrees with the hammer up and 14 with it laid back.
+const gun = (thumbAngle, thumbStraight = true) => ({ ...GUN, thumbAngle, thumbStraight });
+const THUMB_UP = gun(63);
+const THUMB_DOWN = gun(14);
 
 describe('updateFiring (continuous)', () => {
   test('fires immediately when the gun appears', () => {
@@ -41,6 +46,68 @@ describe('updateFiring (continuous)', () => {
     const perSecond = shots / ((125 * 8) / 1000);
     expect(perSecond).toBeGreaterThanOrEqual(10);
     expect(perSecond).toBeLessThanOrEqual(21);
+  });
+
+  test('the thumb is the hammer: up fires, down does not', () => {
+    const down = createHandFiringState();
+    let now = 0;
+    for (let i = 0; i < 30; i++) {
+      expect(updateFiring(down, THUMB_DOWN, (now += 16)).didFire).toBe(false);
+    }
+    expect(updateFiring(down, THUMB_DOWN, now).thumbUp).toBe(false);
+
+    const up = createHandFiringState();
+    expect(updateFiring(up, THUMB_UP, 1000).didFire).toBe(true);
+  });
+
+  test('dropping the thumb stops the stream, raising it starts it again', () => {
+    const s = createHandFiringState();
+    let now = 0;
+    expect(updateFiring(s, THUMB_UP, (now += 16)).didFire).toBe(true);
+
+    // Hammer down: the pose is still held, but nothing comes out.
+    let fired = 0;
+    for (let i = 0; i < 20; i++) {
+      if (updateFiring(s, THUMB_DOWN, (now += 16)).didFire) fired++;
+    }
+    expect(fired).toBe(0);
+    expect(s.firing).toBe(false);
+
+    // Hammer back up: firing resumes immediately.
+    expect(updateFiring(s, THUMB_UP, (now += 16)).didFire).toBe(true);
+  });
+
+  test('a thumb hovering in the middle does not chatter the stream', () => {
+    const s = createHandFiringState();
+    let now = 0;
+    // Inside the hysteresis band from a standing start: still not cocked.
+    for (let i = 0; i < 10; i++) {
+      expect(updateFiring(s, gun(42), (now += 16)).didFire).toBe(false);
+    }
+    // Once genuinely up, drifting back into the band keeps it firing.
+    updateFiring(s, THUMB_UP, (now += 16));
+    let fired = 0;
+    for (let i = 0; i < 10; i++) {
+      if (updateFiring(s, gun(42), (now += 16)).didFire) fired++;
+    }
+    expect(fired).toBeGreaterThan(0);
+  });
+
+  test('a bent thumb tucked into the palm is not a raised hammer', () => {
+    const s = createHandFiringState();
+    // Pointing away from the barrel, but folded rather than straight.
+    expect(updateFiring(s, gun(70, false), 1000).didFire).toBe(false);
+  });
+
+  test('losing the gun resets the hammer, so it cannot resume mid-stream', () => {
+    const s = createHandFiringState();
+    let now = 0;
+    updateFiring(s, THUMB_UP, (now += 16));
+    expect(s.thumb).toBe('up');
+    for (let i = 0; i < 10; i++) updateFiring(s, null, (now += 16));
+    expect(s.thumb).toBe('down');
+    // Reappearing with the thumb down must not fire.
+    expect(updateFiring(s, THUMB_DOWN, (now += 16)).didFire).toBe(false);
   });
 
   test('does not fire without a gun', () => {

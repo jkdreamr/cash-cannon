@@ -6,13 +6,15 @@ Runs entirely in your browser with hand tracking via MediaPipe, no backend.
 ## How to play
 
 1. Click **Start camera** and allow access.
-2. Make a finger gun (index out, other fingers folded).
-3. **Hold the gun shape** and cash streams out of your fingertip. Point to aim,
-   including straight at the lens, and the notes fly at the viewer.
-4. Drop the shape to stop. Two hands = dual wield.
+2. Make a proper finger gun: index out, middle, ring and little fingers folded,
+   and your **thumb up** like a raised hammer.
+3. **Hold it** and cash streams out of your fingertip. Point to aim, including
+   straight at the lens, and the notes fly at the viewer.
+4. **Drop your thumb to stop firing**, raise it to start again. Two hands =
+   dual wield.
 5. Hit **Make it rain** to have money fall from the sky.
-6. Notes that land on you stay there. Shake, or sweep a hand across yourself,
-   to knock them off.
+6. Notes land on your head and shoulders and stay there. Shake, or sweep a hand
+   across yourself, to knock them off.
 7. Toggle sound with the speaker button.
 
 Tip: good light and a plain background behind your hand make tracking more
@@ -25,9 +27,11 @@ Notes only come to rest where they physically could. A note stays on a surface
 only while its tilt is under the friction angle, about 20 to 25 degrees for
 paper on skin or cloth, and that is mass-free: a note slides whenever
 tan(tilt) exceeds the friction coefficient, whatever it weighs. On a standing
-person almost nothing qualifies. So money settles on your shoulders, the top of
-your head, and a forearm held level, and slides off your chest and face exactly
-as it would in life.
+person almost nothing qualifies. So money settles on your shoulders, the crown
+of your head, and a forearm held level, and slides off your chest and face
+exactly as it would in life. Hair holds paper best of all, because the note
+interlocks with it rather than merely resting, so the top of your head is the
+easiest place on you to catch money.
 
 Once resting, a note is pinned to a frame built from your shoulder line, so it
 travels with the part of you it is lying on: step sideways and it goes with you,
