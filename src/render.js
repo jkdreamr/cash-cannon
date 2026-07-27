@@ -81,6 +81,7 @@ export function createRenderer(canvas, options = {}) {
     }
     items.sort((a, b) => b.pos.z - a.pos.z);
 
+    const dt = state.dt || 0;
     const canOcclude = personStencil && personZ != null;
     ctx.save();
     ctx.translate(shake.x, shake.y);
@@ -88,17 +89,17 @@ export function createRenderer(canvas, options = {}) {
     if (canOcclude) {
       let i = 0;
       for (; i < items.length && items[i].pos.z > personZ; i++) {
-        drawBill(ctx, cam, items[i].p, items[i].pos, sheet);
+        drawNote(ctx, cam, items[i].p, items[i].pos, sheet, dt);
       }
       ctx.restore();
       drawPerson(video, personStencil, w, h);
       ctx.save();
       ctx.translate(shake.x, shake.y);
       for (; i < items.length; i++) {
-        drawBill(ctx, cam, items[i].p, items[i].pos, sheet);
+        drawNote(ctx, cam, items[i].p, items[i].pos, sheet, dt);
       }
     } else {
-      for (const it of items) drawBill(ctx, cam, it.p, it.pos, sheet);
+      for (const it of items) drawNote(ctx, cam, it.p, it.pos, sheet, dt);
     }
 
     ctx.restore();
@@ -119,7 +120,43 @@ function hairline(ctx, ax, ay, bx, by, thickness, alpha) {
   ctx.restore();
 }
 
-function drawBill(ctx, cam, p, pos, sheet) {
+// A note leaving a finger crosses a large part of its own length every frame.
+// A real camera records that as a streak; drawing a single hard copy instead
+// makes the money look like it pops into existence away from the hand. These
+// are the intermediate positions the note actually occupied during the frame.
+const GHOSTS = [0.66, 0.33];
+
+function drawNote(ctx, cam, p, pos, sheet, dt) {
+  if (p.stuck || !dt || !p.v) {
+    drawBill(ctx, cam, p, pos, sheet);
+    return;
+  }
+
+  // How far it moved on screen during the frame just rendered.
+  const back = { x: pos.x - p.v.x * dt, y: pos.y - p.v.y * dt, z: pos.z - p.v.z * dt };
+  if (back.z <= 0.06) {
+    drawBill(ctx, cam, p, pos, sheet);
+    return;
+  }
+  const a = project(cam, pos);
+  const b = project(cam, back);
+  const travel = Math.hypot(a.x - b.x, a.y - b.y);
+  const noteWidth = (cam.f * BILL_LONG) / pos.z;
+
+  if (travel > noteWidth * 0.35) {
+    for (const f of GHOSTS) {
+      drawBill(
+        ctx, cam, p,
+        { x: pos.x - p.v.x * dt * f, y: pos.y - p.v.y * dt * f, z: pos.z - p.v.z * dt * f },
+        sheet,
+        0.38 * (1 - f * 0.5)
+      );
+    }
+  }
+  drawBill(ctx, cam, p, pos, sheet);
+}
+
+function drawBill(ctx, cam, p, pos, sheet, fade = 1) {
   if (pos.z <= 0.06) return;
 
   const long = scale(p.t, BILL_LONG / 2);
@@ -141,7 +178,7 @@ function drawBill(ctx, cam, p, pos, sheet) {
   if (bw > 6000 || bh > 6000) return;
 
   // Distance haze, so deep notes settle into the background.
-  const alpha = pos.z > 4 ? Math.max(0.25, 1 - (pos.z - 4) / 7) : 1;
+  const alpha = (pos.z > 4 ? Math.max(0.25, 1 - (pos.z - 4) / 7) : 1) * fade;
 
   // Edge-on either way: the note is a paper edge, not a surface. Both axes need
   // handling or a note turned side-on to the lens would vanish entirely.

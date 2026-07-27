@@ -14,15 +14,33 @@ describe('updateFiring (continuous)', () => {
   });
 
   test('fires repeatedly at the cadence while held', () => {
+    // Derived from the interval rather than hardcoded, so tuning the rate does
+    // not silently invalidate the test.
+    const fireIntervalMs = 50;
+    const frames = 40;
+    const stepMs = 8;
     const s = createHandFiringState();
     let now = 0;
     let shots = 0;
-    for (let i = 0; i < 20; i++) {
-      if (updateFiring(s, GUN, (now += 16)).didFire) shots++;
+    for (let i = 0; i < frames; i++) {
+      if (updateFiring(s, GUN, (now += stepMs), { fireIntervalMs }).didFire) shots++;
     }
-    // ~320ms at a 70ms cadence: first shot immediate, then ~one per 70ms.
-    expect(shots).toBeGreaterThanOrEqual(4);
-    expect(shots).toBeLessThanOrEqual(6);
+    // One immediately, then one per interval over the elapsed window.
+    const expected = 1 + Math.floor((frames * stepMs) / fireIntervalMs);
+    expect(shots).toBeGreaterThanOrEqual(expected - 1);
+    expect(shots).toBeLessThanOrEqual(expected + 1);
+  });
+
+  test('the shipped cadence sits inside a real money gun rate of 10 to 20 a second', () => {
+    const s = createHandFiringState();
+    let now = 0;
+    let shots = 0;
+    for (let i = 0; i < 125; i++) {
+      if (updateFiring(s, GUN, (now += 8)).didFire) shots++;
+    }
+    const perSecond = shots / ((125 * 8) / 1000);
+    expect(perSecond).toBeGreaterThanOrEqual(10);
+    expect(perSecond).toBeLessThanOrEqual(21);
   });
 
   test('does not fire without a gun', () => {

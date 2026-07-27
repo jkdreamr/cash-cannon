@@ -121,6 +121,55 @@ describe('depth behaviour', () => {
     expect(Math.max(...z)).toBeLessThanOrEqual(5);
   });
 
+  test('the stream stays attached to the fingertip it is fired from', () => {
+    // The muzzle offset is a world distance, and close to the lens a small one
+    // is a lot of pixels: 0.10 m at a hand 0.7 m away is a 214 px hole between
+    // the finger and the first note, which reads as money appearing from
+    // nowhere. Some note must always be touching the fingertip.
+    const z = 0.7;
+    const tip = { x: 0.05, y: 0.1, z };
+    const tipPx = project(cam, tip);
+    const noteWidth = (cam.f * 0.156) / z;
+    const sys = createSystem();
+    const rng = lcg(31);
+    let t = 0;
+    let sinceShot = 0;
+    const gaps = [];
+
+    for (let f = 0; f < 120; f++) {
+      const dt = 1 / 60;
+      t += dt;
+      sinceShot += dt * 1000;
+      if (sinceShot > 50) {
+        sinceShot = 0;
+        spawnBurst(sys, {
+          origin: tip, dir: { x: 0.5, y: -0.8, z: -0.2 },
+          count: 1, preAdvance: rng() * dt, rng,
+        });
+      }
+      step(sys, dt, { cam, time: t, wind: true });
+
+      if (f > 20) {
+        let nearest = Infinity;
+        for (const q of sys.particles) {
+          if (q.p.z < 0.1) continue;
+          const s = project(cam, q.p);
+          const half = (cam.f * 0.156) / q.p.z / 2;
+          nearest = Math.min(nearest, Math.max(0, Math.hypot(s.x - tipPx.x, s.y - tipPx.y) - half));
+        }
+        gaps.push(nearest);
+      }
+    }
+
+    gaps.sort((a, b) => a - b);
+    const median = gaps[Math.floor(gaps.length / 2)];
+    const worst = gaps[gaps.length - 1];
+    // Typically touching the fingertip, and never more than a note of clear
+    // air even at the widest moment between shots.
+    expect(median).toBeLessThan(noteWidth * 0.25);
+    expect(worst).toBeLessThan(noteWidth);
+  });
+
   test('notes that fly past the lens are removed', () => {
     const sys = createSystem();
     spawnBurst(sys, { origin: { x: 0, y: 0, z: 1.2 }, dir: { x: 0, y: 0, z: -1 }, count: 2, rng: fixedRng });
@@ -183,8 +232,64 @@ describe('landing on the person', () => {
     const onTop = stickAt(-0.36);
     expect(onTop).toBeTruthy();
     expect(onTop.top).toBe(true);
-    // Lying on a surface means the face points mostly upward, not at the lens.
-    expect(Math.abs(onTop.n.y)).toBeGreaterThan(Math.abs(onTop.n.z));
+    // Lying on a surface means the face points almost straight up, so from a
+    // camera in front of you the note is strongly foreshortened. Tilting it
+    // toward the lens is what made resting money look like a floating sticker.
+    expect(Math.abs(onTop.n.y)).toBeGreaterThan(0.85);
+    expect(Math.abs(onTop.n.y)).toBeGreaterThan(Math.abs(onTop.n.z) * 2);
+  });
+
+  test('money only comes to rest where a body can hold it, never on the face', () => {
+    // A stand-in body: crown above, shoulders below, face in between.
+    const SH = { ax: 0.32, bx: 0.60, y: 0.62 };
+    const noseX = (SH.ax + SH.bx) / 2;
+    const bw = SH.bx - SH.ax;
+    const headTop = 0.4 - bw * 0.31;
+    const env = {
+      cam, wind: true, time: 0, personZ: 1.5,
+      sampleMask: () => true,
+      stickTest: (u, v) => {
+        for (const sx of [SH.ax, SH.bx]) {
+          if (Math.hypot(u - sx, v - SH.y) < bw * 0.3 && v < SH.y + bw * 0.16) {
+            return { kind: 'shoulder', hold: 1 };
+          }
+        }
+        if (v > headTop - bw * 0.11 && v < headTop + bw * 0.12 && Math.abs(u - noseX) < bw * 0.26) {
+          return { kind: 'head', hold: 0.95 };
+        }
+        return null;
+      },
+    };
+
+    const sys = createSystem();
+    const rng = lcg(41);
+    let t = 0;
+    let rainClock = 0;
+    for (let f = 0; f < 60 * 20; f++) {
+      const dt = 1 / 60;
+      t += dt;
+      rainClock += dt;
+      env.time = t;
+      if (rainClock > 0.07) {
+        rainClock = 0;
+        spawnRain(sys, { cam, count: 2, focusZ: 1.5, rng });
+      }
+      step(sys, dt, env);
+    }
+
+    const resting = sys.particles.filter((p) => p.stuck);
+    expect(resting.length).toBeGreaterThan(0);
+    for (const p of resting) {
+      expect(['shoulder', 'head']).toContain(p.site);
+      // Every resting note must still be somewhere the body can actually hold
+      // it. Anything settling where the test says null is on a surface too
+      // steep to hold paper, which is how notes ended up across a face.
+      expect(env.stickTest(p.u, p.v2)).not.toBe(null);
+    }
+
+    // And the middle of the face, which holds nothing in reality, holds
+    // nothing here either.
+    expect(env.stickTest(noseX, 0.44)).toBe(null);
   });
 
   test('resting notes ride along when the person moves', () => {
