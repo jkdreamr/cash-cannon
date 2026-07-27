@@ -1,24 +1,31 @@
 // Canvas 2D renderer for the 3D scene.
 //
-// Notes are drawn as real rectangles in space: their four corners are projected
-// through the camera, so perspective, foreshortening and edge-on views all come
-// out of the geometry rather than being faked. Depth sorting plus a cut-out of
-// the person gives correct occlusion, so money can pass behind you.
+// Notes are real rectangles in space: their corners are projected through the
+// camera, so perspective, foreshortening and edge-on views fall out of the
+// geometry. The face artwork is pre-rendered once (see billart.js) and blitted
+// per note, which is what makes engraving-level detail affordable at a hundred
+// notes a frame.
 
 import { cross, scale, dot, normalize } from './vec3.js';
 import { project } from './camera3d.js';
 import { BILL_LONG, BILL_SHORT, stuckWorld } from './physics.js';
+import { createBillArt } from './billart.js';
 
 // Light from the upper front, so notes flash as they tumble.
 const LIGHT = normalize({ x: -0.3, y: -0.62, z: -0.72 });
 
 export function createRenderer(canvas, options = {}) {
   const ctx = canvas.getContext('2d');
-  // The cut-out buffer is only needed once something is actually behind the
-  // person, so it is created lazily and can be injected for testing.
   const makeCanvas = options.createCanvas || (() => document.createElement('canvas'));
+  // Built lazily so the module can be loaded without a DOM.
+  let art = options.art || null;
   let cut = null;
   let cutCtx = null;
+
+  function ensureArt() {
+    if (!art) art = createBillArt({ createCanvas: makeCanvas });
+    return art;
+  }
 
   function drawMirrored(target, image, w, h) {
     target.save();
@@ -55,6 +62,7 @@ export function createRenderer(canvas, options = {}) {
     } = state;
     const w = cam.width;
     const h = cam.height;
+    const sheet = ensureArt();
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, w, h);
@@ -66,7 +74,6 @@ export function createRenderer(canvas, options = {}) {
       ctx.fillRect(0, 0, w, h);
     }
 
-    // Resolve a world position for every particle, then sort far to near.
     const items = [];
     for (const p of particles) {
       const pos = p.stuck ? stuckWorld(p, cam) : p.p;
@@ -80,20 +87,18 @@ export function createRenderer(canvas, options = {}) {
 
     if (canOcclude) {
       let i = 0;
-      // Behind the person.
       for (; i < items.length && items[i].pos.z > personZ; i++) {
-        drawParticle(ctx, cam, items[i].p, items[i].pos);
+        drawBill(ctx, cam, items[i].p, items[i].pos, sheet);
       }
       ctx.restore();
       drawPerson(video, personStencil, w, h);
       ctx.save();
       ctx.translate(shake.x, shake.y);
-      // In front of the person, including anything resting on them.
       for (; i < items.length; i++) {
-        drawParticle(ctx, cam, items[i].p, items[i].pos);
+        drawBill(ctx, cam, items[i].p, items[i].pos, sheet);
       }
     } else {
-      for (const it of items) drawParticle(ctx, cam, it.p, it.pos);
+      for (const it of items) drawBill(ctx, cam, it.p, it.pos, sheet);
     }
 
     ctx.restore();
@@ -102,17 +107,25 @@ export function createRenderer(canvas, options = {}) {
   return { draw };
 }
 
-function drawParticle(ctx, cam, p, pos) {
-  if (pos.z <= 0.05) return;
-  drawBill(ctx, cam, p, pos);
+function hairline(ctx, ax, ay, bx, by, thickness, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = '#cdc6b0';
+  ctx.lineWidth = Math.max(1, thickness + 0.9);
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(bx, by);
+  ctx.stroke();
+  ctx.restore();
 }
 
-function drawBill(ctx, cam, p, pos) {
+function drawBill(ctx, cam, p, pos, sheet) {
+  if (pos.z <= 0.06) return;
+
   const long = scale(p.t, BILL_LONG / 2);
   const shortAxis = cross(p.n, p.t);
   const short = scale(shortAxis, BILL_SHORT / 2);
 
-  // Four corners of the note in space, then projected.
   const c0 = project(cam, { x: pos.x - long.x - short.x, y: pos.y - long.y - short.y, z: pos.z - long.z - short.z });
   const c1 = project(cam, { x: pos.x + long.x - short.x, y: pos.y + long.y - short.y, z: pos.z + long.z - short.z });
   const c3 = project(cam, { x: pos.x - long.x + short.x, y: pos.y - long.y + short.y, z: pos.z - long.z + short.z });
@@ -125,7 +138,22 @@ function drawBill(ctx, cam, p, pos) {
   let e2y = c3.y - c0.y;
   const bw = Math.hypot(e1x, e1y);
   const bh = Math.hypot(e2x, e2y);
-  if (bw < 1 || bw > 4000) return;
+  if (bw > 6000 || bh > 6000) return;
+
+  // Distance haze, so deep notes settle into the background.
+  const alpha = pos.z > 4 ? Math.max(0.25, 1 - (pos.z - 4) / 7) : 1;
+
+  // Edge-on either way: the note is a paper edge, not a surface. Both axes need
+  // handling or a note turned side-on to the lens would vanish entirely.
+  if (bh < 1.6 && bw >= 1.6) {
+    hairline(ctx, c0.x, c0.y, c1.x, c1.y, bh, alpha * 0.85);
+    return;
+  }
+  if (bw < 1.6 && bh >= 1.6) {
+    hairline(ctx, c0.x, c0.y, c3.x, c3.y, bw, alpha * 0.85);
+    return;
+  }
+  if (bw < 1.6 && bh < 1.6) return;
 
   // A note seen from one side yields a left-handed screen basis, which makes
   // the canvas mirror everything drawn into it. Re-anchor to the opposite
@@ -137,146 +165,42 @@ function drawBill(ctx, cam, p, pos) {
     e2y = -e2y;
   }
 
-  // Distance haze, so deep notes settle into the background.
-  const alpha = pos.z > 4 ? Math.max(0.25, 1 - (pos.z - 4) / 7) : 1;
-
-  // Edge-on: the note is a hairline. Drawing the quad would vanish, so draw the
-  // paper edge instead, which is what you actually see.
-  if (bh < 1.6) {
-    ctx.save();
-    ctx.globalAlpha = alpha * 0.85;
-    ctx.strokeStyle = '#b9c2a6';
-    ctx.lineWidth = Math.max(1, bh + 0.9);
-    ctx.beginPath();
-    ctx.moveTo(c0.x, c0.y);
-    ctx.lineTo(c1.x, c1.y);
-    ctx.stroke();
-    ctx.restore();
-    return;
-  }
-
   const ux = e1x / bw;
   const uy = e1y / bw;
   const vx = e2x / bh;
   const vy = e2y / bh;
 
-  // Lambert shading on the note face, so it glints while tumbling.
-  const facing = dot(p.n, LIGHT);
-  const shade = 0.55 + 0.45 * Math.min(1, Math.abs(facing));
-  // Which side are we looking at?
   const toCam = normalize({ x: -pos.x, y: -pos.y, z: -pos.z });
   const back = dot(p.n, toCam) < 0;
+  const faces = back ? sheet.back : sheet.front;
+  const tex = faces[(p.variant || 0) % faces.length];
 
-  // Real currency paper is a pale desaturated sage, not a vivid green. Each
-  // note is nudged slightly so a drift of them does not read as clones.
-  const tone = p.tone || 0;
-  const k = shade * (0.94 + tone * 0.12);
-  const paper = back ? rgb(184, 198, 172, k) : rgb(206, 212, 189, k);
-  const ink = back ? rgb(58, 92, 68, k) : rgb(62, 88, 68, k);
+  // Lambert term. Notes catch the light as they tumble.
+  const shade = 0.58 + 0.42 * Math.min(1, Math.abs(dot(p.n, LIGHT)));
 
-  // A note lying on someone casts a small shadow onto them. Without this
-  // contact cue the money reads as pasted over the picture.
+  // A note resting on someone casts a shadow onto them. Without this contact
+  // cue the money reads as pasted over the picture.
   if (p.stuck) {
-    const off = Math.max(1.5, bw * 0.035);
+    const off = Math.max(1.5, bw * 0.03);
     ctx.save();
-    ctx.globalAlpha = alpha * 0.28;
-    ctx.transform(ux, uy, vx, vy, ox + off * 0.5, oy + off);
-    ctx.fillStyle = '#0d1a10';
-    roundRect(ctx, 0, 0, bw, bh, Math.min(bw, bh) * 0.06);
-    ctx.fill();
+    ctx.globalAlpha = alpha * 0.3;
+    ctx.transform(ux, uy, vx, vy, ox + off * 0.45, oy + off);
+    ctx.fillStyle = '#101a12';
+    ctx.fillRect(0, 0, bw, bh);
     ctx.restore();
   }
 
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.transform(ux, uy, vx, vy, ox, oy);
+  ctx.drawImage(tex, 0, 0, bw, bh);
 
-  ctx.fillStyle = paper;
-  roundRect(ctx, 0, 0, bw, bh, Math.min(bw, bh) * 0.06);
-  ctx.fill();
-
-  if (bw > 18) {
-    // Engraved border.
-    ctx.strokeStyle = ink;
-    ctx.lineWidth = Math.max(0.5, bw * 0.008);
-    ctx.globalAlpha = alpha * 0.75;
-    roundRect(ctx, bw * 0.045, bh * 0.09, bw * 0.91, bh * 0.82, Math.min(bw, bh) * 0.04);
-    ctx.stroke();
-    ctx.globalAlpha = alpha;
+  // Shade by darkening rather than washing with white: currency has no pure
+  // white on it, and a straight-edged white band is an obvious shader hack.
+  if (shade < 0.99) {
+    ctx.globalAlpha = alpha * (1 - shade) * 0.95;
+    ctx.fillStyle = '#12180f';
+    ctx.fillRect(0, 0, bw, bh);
   }
-
-  if (bw > 34) {
-    if (back) {
-      // Reverse: the engraved hall, a low wide block with a pediment.
-      ctx.fillStyle = rgb(96, 128, 100, k);
-      ctx.globalAlpha = alpha * 0.5;
-      ctx.fillRect(bw * 0.3, bh * 0.42, bw * 0.4, bh * 0.3);
-      ctx.fillRect(bw * 0.45, bh * 0.26, bw * 0.1, bh * 0.18);
-      ctx.globalAlpha = alpha;
-    } else {
-      // Obverse: portrait oval left of centre, seal to the right.
-      ctx.fillStyle = rgb(104, 116, 98, k);
-      ctx.globalAlpha = alpha * 0.55;
-      ctx.beginPath();
-      ctx.ellipse(bw * 0.42, bh * 0.52, bw * 0.115, bh * 0.31, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = alpha * 0.4;
-      ctx.beginPath();
-      ctx.ellipse(bw * 0.63, bh * 0.55, bw * 0.05, bh * 0.15, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = alpha;
-    }
-  }
-
-  // Corner denominations, the way a real note is marked.
-  if (bw > 56) {
-    ctx.fillStyle = ink;
-    ctx.globalAlpha = alpha * 0.85;
-    const fs = Math.max(4, Math.round(bh * 0.17));
-    ctx.font = `${fs}px Georgia, "Times New Roman", serif`;
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
-    ctx.fillText('100', bw * 0.08, bh * 0.2);
-    ctx.textAlign = 'right';
-    ctx.fillText('100', bw * 0.92, bh * 0.8);
-    ctx.globalAlpha = alpha;
-  }
-
-  // Fine engraving lines only once the note is large enough to show them.
-  if (bw > 90) {
-    ctx.strokeStyle = ink;
-    ctx.globalAlpha = alpha * 0.18;
-    ctx.lineWidth = 0.6;
-    ctx.beginPath();
-    for (let i = 1; i <= 3; i++) {
-      const y = bh * (0.2 + i * 0.16);
-      ctx.moveTo(bw * 0.08, y);
-      ctx.lineTo(bw * 0.34, y);
-    }
-    ctx.stroke();
-    ctx.globalAlpha = alpha;
-  }
-
-  // A faint sheen across the top, which is how paper catches the light.
-  ctx.fillStyle = `rgba(255,255,255,${0.07 * shade})`;
-  roundRect(ctx, 0, 0, bw, bh * 0.4, Math.min(bw, bh) * 0.05);
-  ctx.fill();
-
   ctx.restore();
-}
-
-function rgb(r, g, b, k) {
-  const c = (v) => Math.max(0, Math.min(255, Math.round(v * k)));
-  return `rgb(${c(r)},${c(g)},${c(b)})`;
-}
-
-function roundRect(ctx, x, y, w, h, r) {
-  const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
-  ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
-  ctx.closePath();
 }

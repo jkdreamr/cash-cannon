@@ -19,6 +19,21 @@ Tip: good light and a plain background behind your hand make tracking more
 reliable. The finger shape is read in 3D, so it still works when the barrel
 points toward the camera.
 
+## Money that lands on you
+
+Notes only come to rest where they physically could. A note stays on a surface
+only while its tilt is under the friction angle, about 20 to 25 degrees for
+paper on skin or cloth, and that is mass-free: a note slides whenever
+tan(tilt) exceeds the friction coefficient, whatever it weighs. On a standing
+person almost nothing qualifies. So money settles on your shoulders, the top of
+your head, and a forearm held level, and slides off your chest and face exactly
+as it would in life.
+
+Once resting, a note is pinned to a frame built from your shoulder line, so it
+travels with the part of you it is lying on: step sideways and it goes with you,
+lean and it tips, come closer and it grows. Shake hard enough and it comes off
+over about a second; sweep a hand across yourself and you brush it away.
+
 ## The physics
 
 Notes are simulated as real banknotes in a real 3D space rather than as sprites
@@ -39,6 +54,14 @@ on a flat canvas:
   and money passes in front of you, behind you, or lands on you accordingly.
 - The person is separated from the background each frame, which is what allows
   money to be hidden behind you and to come to rest on your shoulders.
+- A money gun's roller shears one note off the stack at a time, so notes leave
+  short edge first and tumbling end over end at 2 to 10 rev/s, about fifteen a
+  second. Edge-on they knife through the air; once they turn flat they brake
+  hard. None of the tumbling is animated, it falls out of the forces.
+- The note artwork is real currency, not green rectangles. US paper money is
+  warm cream rag stock, and the green everyone pictures is the ink on the back.
+  Each note carries an engraved portrait, both seals, a blue security ribbon,
+  its own serial number and its own creases and wear.
 
 ## Run locally
 

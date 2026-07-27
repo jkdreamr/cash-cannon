@@ -1,29 +1,44 @@
-import {
-  HandLandmarker,
-  ImageSegmenter,
-  FilesetResolver,
-} from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
 import { classifyHand, LM } from './gesture.js';
 import { createHandFiringState, updateFiring } from './firing.js';
 import {
   createSystem, spawnBurst, spawnRain, step,
-  carryStuck, shakeStuck, knockStuck,
+  carryStuck, shakeStuck, knockStuck, bindStuckToBody, applyBodyBasis,
 } from './physics.js';
 import { createCamera, unproject, depthFromSpan } from './camera3d.js';
 import { normalize } from './vec3.js';
 import { createRenderer } from './render.js';
 import { createAudio } from './audio.js';
 import { createSegmenter, createPersonTracker } from './segmentation.js';
+import { createPoseLandmarker, createBodyTracker } from './pose.js';
 
 const HAND_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+// Imported on demand rather than at the top of the module. A static import of a
+// multi-megabyte CDN bundle delays this whole file, which means the Start
+// button has no click handler for the first few seconds and pressing it does
+// nothing at all.
+const VISION_BUNDLE_URL =
+  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
 
-// Inference is synchronous and heavy, so both models run on a throttle while
-// the scene keeps rendering every frame. The feed never stalls.
+// Three synchronous models share one thread, so they are throttled AND
+// staggered: at most one runs on any given frame. Letting two land together is
+// what freezes the camera feed.
 const DETECT_INTERVAL_MS = 55;
 const SEGMENT_INTERVAL_MS = 110;
+const POSE_INTERVAL_MS = 130;
 const RAIN_INTERVAL_MS = 70;
+
+// Anatomical constant rather than a per-frame measurement. Deriving the span
+// from noisy landmarks put that noise straight into the depth estimate, and
+// since projected note width is (BILL_LONG / span) x pixelSpan, it appeared
+// directly as the notes pulsing in size.
+const KNUCKLE_SPAN_M = 0.08;
+// A hand naturally sits about 0.4 m from a webcam, where a note would render a
+// third of the frame wide. Treating anything nearer as this far keeps notes a
+// legible size without moving where they leave the fingertip on screen.
+const MIN_MUZZLE_Z = 0.55;
+const MAX_MUZZLE_Z = 4;
 
 const el = (id) => document.getElementById(id);
 const canvas = el('feed');
@@ -38,20 +53,25 @@ const renderer = createRenderer(canvas);
 const audio = createAudio();
 const system = createSystem();
 const person = createPersonTracker();
+const body = createBodyTracker();
 const firingStates = new Map();
-const handTracks = new Map(); // smoothed per-hand state between detections
+const handTracks = new Map();
 
 let cam = createCamera(1280, 720);
 let landmarker = null;
 let segmenter = null;
+let poser = null;
 let running = false;
+let starting = false;
 let lastVideoTime = -1;
 let lastTs = 0;
 let lastDetectMs = 0;
 let lastSegmentMs = 0;
+let lastPoseMs = 0;
 let lastRainMs = 0;
 let lastChaChingMs = 0;
 let segStamp = 0;
+let poseStamp = 0;
 let shakeMag = 0;
 let raining = false;
 let personZ = 1.5;
@@ -73,7 +93,17 @@ function resizeCanvas() {
 }
 window.addEventListener('resize', resizeCanvas);
 
+// Exponential smoothing with a real time constant, so the amount of smoothing
+// does not change with frame rate.
+function smooth(prev, next, dt, tau) {
+  if (prev == null) return next;
+  const k = 1 - Math.exp(-dt / tau);
+  return prev + (next - prev) * k;
+}
+
 async function loadModels() {
+  const { HandLandmarker, ImageSegmenter, PoseLandmarker, FilesetResolver } =
+    await import(VISION_BUNDLE_URL);
   const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
   const opts = {
     baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: 'GPU' },
@@ -90,16 +120,40 @@ async function loadModels() {
     landmarker = await HandLandmarker.createFromOptions(fileset, opts);
   }
 
-  // Segmentation is a bonus: it adds depth occlusion and money landing on you.
-  // If it will not load, the scene still runs without those.
+  // Both extras are optional. Without them money still flies and falls; it just
+  // stops being occluded by you and resting on you.
   try {
     segmenter = await createSegmenter(ImageSegmenter, fileset);
   } catch (e) {
     segmenter = null;
   }
+  try {
+    poser = await createPoseLandmarker(PoseLandmarker, fileset);
+  } catch (e) {
+    poser = null;
+  }
 }
 
 async function start() {
+  // The button stays on screen through the camera prompt and a multi-second
+  // model download, so an impatient second click is easy. Without this guard
+  // that would start a second render loop for the rest of the session and
+  // reload every model on top of the first.
+  if (starting || running) return;
+  starting = true;
+  const btns = [el('startBtn'), el('retryBtn')];
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    await startInner();
+  } finally {
+    starting = false;
+    btns.forEach((b) => { b.disabled = false; });
+    // Reset the label so a retry does not read "Starting...".
+    if (!running) el('startBtn').textContent = 'Start camera';
+  }
+}
+
+async function startInner() {
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
     showError(
       'The camera only works over https or http://localhost. If you opened the file directly, run "npm run serve" and visit http://localhost:8000.'
@@ -108,6 +162,7 @@ async function start() {
   }
 
   audio.unlock();
+  el('startBtn').textContent = 'Starting...';
 
   let stream;
   try {
@@ -150,9 +205,10 @@ async function start() {
   requestAnimationFrame(loop);
 }
 
+// Returns true if a model ran, so callers can keep one inference per frame.
 function runDetection(ts) {
-  if (ts - lastDetectMs < DETECT_INTERVAL_MS) return;
-  if (video.readyState < 2 || video.currentTime === lastVideoTime) return;
+  if (ts - lastDetectMs < DETECT_INTERVAL_MS) return false;
+  if (video.readyState < 2 || video.currentTime === lastVideoTime) return false;
   lastDetectMs = ts;
   lastVideoTime = video.currentTime;
   try {
@@ -164,13 +220,13 @@ function runDetection(ts) {
   } catch (err) {
     // One bad inference frame must never kill the loop.
   }
+  return true;
 }
 
 function runSegmentation(ts) {
-  if (!segmenter || ts - lastSegmentMs < SEGMENT_INTERVAL_MS) return;
-  if (video.readyState < 2) return;
+  if (!segmenter || ts - lastSegmentMs < SEGMENT_INTERVAL_MS) return false;
+  if (video.readyState < 2) return false;
   lastSegmentMs = ts;
-  // MediaPipe requires strictly increasing timestamps per task instance.
   segStamp = Math.max(segStamp + 1, Math.round(ts));
   try {
     segmenter.segmentForVideo(video, segStamp, (result) => {
@@ -183,52 +239,83 @@ function runSegmentation(ts) {
       }
     });
   } catch (err) {
-    // Ignore a dropped segmentation frame; the previous mask stays valid.
+    // Keep the previous mask.
   }
+  return true;
 }
 
-// Turn one detected hand into real 3D: where the fingertip is in space and
-// which way the barrel points, including straight at the lens.
-function resolveHand(i, w, h) {
+function runPose(ts) {
+  if (!poser || ts - lastPoseMs < POSE_INTERVAL_MS) return false;
+  if (video.readyState < 2) return false;
+  lastPoseMs = ts;
+  poseStamp = Math.max(poseStamp + 1, Math.round(ts));
+  try {
+    const res = poser.detectForVideo(video, poseStamp);
+    body.update(res && res.landmarks);
+  } catch (err) {
+    // Keep the previous body frame rather than snapping the money about.
+  }
+  return true;
+}
+
+// Turn one detected hand into real 3D: where the muzzle is in space and which
+// way it points, including straight at the lens. Everything here is smoothed,
+// because the raw landmarks are re-measured only about fifteen times a second
+// and any wobble shows up directly as notes changing size and position.
+function resolveHand(i, w, h, ts, dt) {
   const lm = hands[i];
   const world = worldHands[i];
+  const label = labels[i];
   const pix = lm.map((pt) => ({ x: (1 - pt.x) * w, y: pt.y * h }));
-  const shape = world || lm;
-  const hand = classifyHand(pix, shape);
+  const hand = classifyHand(pix, world || lm);
 
-  // Distance from the apparent width across the knuckles.
-  let z = null;
-  if (world) {
-    const a = world[LM.INDEX_MCP];
-    const b = world[LM.PINKY_MCP];
-    const meters = Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
-    const pixels = Math.hypot(
-      pix[LM.INDEX_MCP].x - pix[LM.PINKY_MCP].x,
-      pix[LM.INDEX_MCP].y - pix[LM.PINKY_MCP].y
-    );
-    z = depthFromSpan(cam, meters, pixels);
-  }
-  if (!z || !isFinite(z)) z = 0.9;
-  z = Math.min(Math.max(z, 0.25), 4);
+  const pixels = Math.hypot(
+    pix[LM.INDEX_MCP].x - pix[LM.PINKY_MCP].x,
+    pix[LM.INDEX_MCP].y - pix[LM.PINKY_MCP].y
+  );
+  let zRaw = depthFromSpan(cam, KNUCKLE_SPAN_M, pixels);
+  if (!zRaw || !isFinite(zRaw)) zRaw = 0.9;
+  zRaw = Math.min(Math.max(zRaw, 0.2), MAX_MUZZLE_Z);
 
-  const tipPix = pix[LM.INDEX_TIP];
-  const tip3 = unproject(cam, tipPix.x, tipPix.y, z);
-
-  // True 3D aim. World landmark x is mirrored to match the selfie view, and z
-  // decreases toward the camera, so pointing at yourself shoots at the viewer.
-  let dir;
+  let dirRaw;
   if (world) {
     const a = world[LM.INDEX_MCP];
     const b = world[LM.INDEX_TIP];
-    dir = normalize({ x: -(b.x - a.x), y: b.y - a.y, z: b.z - a.z });
+    dirRaw = normalize({ x: -(b.x - a.x), y: b.y - a.y, z: b.z - a.z });
   } else {
-    dir = { x: hand.aim.x, y: hand.aim.y, z: 0 };
+    dirRaw = { x: hand.aim.x, y: hand.aim.y, z: 0 };
   }
-  if (!(Math.abs(dir.x) + Math.abs(dir.y) + Math.abs(dir.z) > 0.1)) {
-    dir = { x: 0, y: -1, z: 0 };
+  if (!(Math.abs(dirRaw.x) + Math.abs(dirRaw.y) + Math.abs(dirRaw.z) > 0.1)) {
+    dirRaw = { x: 0, y: -1, z: 0 };
   }
 
-  return { hand, tip3, dir, z, tipPix };
+  const tipPix = pix[LM.INDEX_TIP];
+  let track = handTracks.get(label);
+  if (!track) {
+    track = { z: zRaw, tx: tipPix.x, ty: tipPix.y, dx: dirRaw.x, dy: dirRaw.y, dz: dirRaw.z, ts };
+    handTracks.set(label, track);
+  }
+
+  track.z = smooth(track.z, zRaw, dt, 0.12);
+  track.tx = smooth(track.tx, tipPix.x, dt, 0.045);
+  track.ty = smooth(track.ty, tipPix.y, dt, 0.045);
+  track.dx = smooth(track.dx, dirRaw.x, dt, 0.07);
+  track.dy = smooth(track.dy, dirRaw.y, dt, 0.07);
+  track.dz = smooth(track.dz, dirRaw.z, dt, 0.07);
+
+  const z = Math.min(Math.max(track.z, MIN_MUZZLE_Z), MAX_MUZZLE_Z);
+  const tip3 = unproject(cam, track.tx, track.ty, z);
+  const dir = normalize({ x: track.dx, y: track.dy, z: track.dz });
+
+  // Hand speed from the smoothed tip, in screen widths per second.
+  const u = track.tx / w;
+  const v = track.ty / h;
+  const speed = track.pu == null ? 0 : Math.hypot(u - track.pu, v - track.pv) / Math.max(dt, 0.004);
+  track.pu = u;
+  track.pv = v;
+  track.ts = ts;
+
+  return { hand, tip3, dir, z, u, v, speed };
 }
 
 function loop(ts) {
@@ -240,59 +327,56 @@ function loop(ts) {
   const w = canvas.width;
   const h = canvas.height;
 
-  runDetection(ts);
-  runSegmentation(ts);
+  // One heavy inference per frame at most.
+  if (!runDetection(ts)) {
+    if (!runSegmentation(ts)) runPose(ts);
+  }
 
-  // Carry resting money with the body, and shake it loose when you move.
-  if (person.present && person.centre) {
+  // Money already resting on someone follows the body it is lying on.
+  if (body.present) {
+    applyBodyBasis(system, body.basis);
+  } else if (person.present && person.centre) {
     const m = person.motion;
     if (m.dx || m.dy) {
       carryStuck(system, m.dx, m.dy);
       person.motion.dx = 0;
       person.motion.dy = 0;
     }
-    if (m.speed > 0) {
-      shakeStuck(system, {
-        speed: m.speed,
-        dirX: Math.sign(m.dx || 0),
-        dirY: Math.sign(m.dy || 0),
-        dt,
-      });
-    }
+  }
+
+  if (person.present && person.motion.speed > 0) {
+    shakeStuck(system, {
+      speed: person.motion.speed,
+      dirX: Math.sign(person.motion.dx || 0),
+      dirY: Math.sign(person.motion.dy || 0),
+      dt,
+      cam,
+    });
   }
 
   const seen = new Set();
   for (let i = 0; i < hands.length; i++) {
     const label = labels[i];
     seen.add(label);
-    const { hand, tip3, dir, z, tipPix } = resolveHand(i, w, h);
+    const { hand, tip3, dir, z, u, v, speed } = resolveHand(i, w, h, ts, dt);
 
-    // The body sits a little behind the hand.
-    personZ = personZ * 0.9 + (z + 0.3) * 0.1;
+    personZ = personZ * 0.94 + (z + 0.3) * 0.06;
 
-    // A quick hand sweep brushes money off you.
-    const track = handTracks.get(label);
-    const u = tipPix.x / w;
-    const v = tipPix.y / h;
-    if (track) {
-      const dtHand = Math.max(0.001, (ts - track.ts) / 1000);
-      const speed = Math.hypot(u - track.u, v - track.v) / dtHand;
-      if (speed > 0.35) knockStuck(system, { u, v, radius: 0.11, speed });
-    }
-    handTracks.set(label, { u, v, ts });
+    if (speed > 0.5) knockStuck(system, { u, v, radius: 0.11, speed, cam });
 
     if (!firingStates.has(label)) firingStates.set(label, createHandFiringState());
     const state = firingStates.get(label);
     const r = updateFiring(state, hand, ts);
 
     if (r.didFire) {
-      spawnBurst(system, { origin: tip3, dir, count: 2 });
+      // A real gun sheds one note at a time; the cadence supplies the stream.
+      spawnBurst(system, { origin: tip3, dir, count: 1 });
       audio.shot();
       if (ts - lastChaChingMs > 380) {
         audio.chaChing();
         lastChaChingMs = ts;
       }
-      shakeMag = 3;
+      shakeMag = 2.5;
     }
   }
 
@@ -302,7 +386,7 @@ function loop(ts) {
 
   if (raining && ts - lastRainMs > RAIN_INTERVAL_MS) {
     lastRainMs = ts;
-    spawnRain(system, { cam, count: 2 });
+    spawnRain(system, { cam, count: 2, focusZ: person.present ? personZ : null });
   }
 
   step(system, dt, {
@@ -311,7 +395,11 @@ function loop(ts) {
     wind: true,
     personZ: person.present ? personZ : null,
     sampleMask: person.present ? person.sampler : null,
+    stickTest: body.present ? (u, v) => body.stickTest(u, v) : null,
   });
+
+  // Anything that just came to rest is pinned to the body from now on.
+  if (body.present) bindStuckToBody(system, body.basis);
 
   shakeMag = Math.max(0, shakeMag - 40 * dt);
   shake.x = (Math.random() - 0.5) * shakeMag;
