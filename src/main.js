@@ -1,19 +1,29 @@
-import { HandLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
-import { classifyHand } from './gesture.js';
+import {
+  HandLandmarker,
+  ImageSegmenter,
+  FilesetResolver,
+} from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+import { classifyHand, LM } from './gesture.js';
 import { createHandFiringState, updateFiring } from './firing.js';
-import { createSystem, spawnBurst, spawnRain, step } from './physics.js';
+import {
+  createSystem, spawnBurst, spawnRain, spawnFlash, step,
+  carryStuck, shakeStuck, knockStuck,
+} from './physics.js';
+import { createCamera, unproject, depthFromSpan } from './camera3d.js';
+import { normalize } from './vec3.js';
 import { createRenderer } from './render.js';
 import { createAudio } from './audio.js';
+import { createSegmenter, createPersonTracker } from './segmentation.js';
 
-const MODEL_URL =
+const HAND_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
 
-// Detection is synchronous and heavy, so we run it on a throttle and reuse the
-// last result between runs. Rendering still happens every frame, which keeps
-// the camera feed smooth instead of freezing while inference runs.
+// Inference is synchronous and heavy, so both models run on a throttle while
+// the scene keeps rendering every frame. The feed never stalls.
 const DETECT_INTERVAL_MS = 55;
-const RAIN_INTERVAL_MS = 90; // how often "make it rain" drops a batch of bills
+const SEGMENT_INTERVAL_MS = 110;
+const RAIN_INTERVAL_MS = 70;
 
 const el = (id) => document.getElementById(id);
 const canvas = el('feed');
@@ -27,62 +37,69 @@ const rainBtn = el('rain');
 const renderer = createRenderer(canvas);
 const audio = createAudio();
 const system = createSystem();
-const firingStates = new Map(); // handedness label -> firing state
+const person = createPersonTracker();
+const firingStates = new Map();
+const handTracks = new Map(); // smoothed per-hand state between detections
 
+let cam = createCamera(1280, 720);
 let landmarker = null;
+let segmenter = null;
 let running = false;
 let lastVideoTime = -1;
 let lastTs = 0;
-let shakeMag = 0;
-let lastChaChingMs = 0; // throttle the cash-register bells during continuous fire
-let fireCount = 0;      // used to eject a shell casing every few shots
-let lastDetectMs = 0;   // detection throttle clock
-let lastHands = [];     // most recent detection, reused between throttled runs
-let lastWorld = [];
-let lastLabels = [];
-let raining = false;    // "make it rain" toggle
+let lastDetectMs = 0;
+let lastSegmentMs = 0;
 let lastRainMs = 0;
+let lastChaChingMs = 0;
+let segStamp = 0;
+let shakeMag = 0;
+let raining = false;
+let personZ = 1.5;
+let hands = [];
+let worldHands = [];
+let labels = [];
 const shake = { x: 0, y: 0 };
 
 function showError(msg) {
   errorMsg.textContent = msg;
   errorOverlay.classList.remove('hidden');
 }
-function hideError() {
-  errorOverlay.classList.add('hidden');
-}
 
 function resizeCanvas() {
   const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
   canvas.width = Math.floor(window.innerWidth * dpr);
   canvas.height = Math.floor(window.innerHeight * dpr);
+  cam = createCamera(canvas.width, canvas.height);
 }
 window.addEventListener('resize', resizeCanvas);
 
-async function loadModel() {
+async function loadModels() {
   const fileset = await FilesetResolver.forVisionTasks(WASM_URL);
   const opts = {
-    baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+    baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate: 'GPU' },
     runningMode: 'VIDEO',
     numHands: 2,
-    // Lenient thresholds so hands are picked up readily, including hard poses
-    // like the barrel pointing toward the camera. The gesture classifier still
-    // gates what actually fires.
     minHandDetectionConfidence: 0.3,
     minHandPresenceConfidence: 0.3,
     minTrackingConfidence: 0.3,
   };
   try {
-    return await HandLandmarker.createFromOptions(fileset, opts);
+    landmarker = await HandLandmarker.createFromOptions(fileset, opts);
   } catch (e) {
-    // Some machines/browsers lack a usable GPU delegate - fall back to CPU.
     opts.baseOptions.delegate = 'CPU';
-    return await HandLandmarker.createFromOptions(fileset, opts);
+    landmarker = await HandLandmarker.createFromOptions(fileset, opts);
+  }
+
+  // Segmentation is a bonus: it adds depth occlusion and money landing on you.
+  // If it will not load, the scene still runs without those.
+  try {
+    segmenter = await createSegmenter(ImageSegmenter, fileset);
+  } catch (e) {
+    segmenter = null;
   }
 }
 
 async function start() {
-  // Secure-context / API guard (the classic file:// trap).
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
     showError(
       'The camera only works over https or http://localhost. If you opened the file directly, run "npm run serve" and visit http://localhost:8000.'
@@ -90,7 +107,7 @@ async function start() {
     return;
   }
 
-  audio.unlock(); // this click is our autoplay unlock
+  audio.unlock();
 
   let stream;
   try {
@@ -117,13 +134,13 @@ async function start() {
   });
 
   try {
-    if (!landmarker) landmarker = await loadModel();
+    if (!landmarker) await loadModels();
   } catch (e) {
     showError('Could not load the hand-tracking model. Check your internet connection and Try Again.');
     return;
   }
 
-  hideError();
+  errorOverlay.classList.add('hidden');
   startOverlay.classList.add('hidden');
   soundBtn.style.display = 'flex';
   rainBtn.style.display = 'inline-flex';
@@ -133,103 +150,189 @@ async function start() {
   requestAnimationFrame(loop);
 }
 
+function runDetection(ts) {
+  if (ts - lastDetectMs < DETECT_INTERVAL_MS) return;
+  if (video.readyState < 2 || video.currentTime === lastVideoTime) return;
+  lastDetectMs = ts;
+  lastVideoTime = video.currentTime;
+  try {
+    const res = landmarker.detectForVideo(video, ts);
+    hands = res.landmarks || [];
+    worldHands = res.worldLandmarks || [];
+    const handed = res.handednesses || res.handedness || [];
+    labels = hands.map((_, i) => handed[i]?.[0]?.categoryName || `h${i}`);
+  } catch (err) {
+    // One bad inference frame must never kill the loop.
+  }
+}
+
+function runSegmentation(ts) {
+  if (!segmenter || ts - lastSegmentMs < SEGMENT_INTERVAL_MS) return;
+  if (video.readyState < 2) return;
+  lastSegmentMs = ts;
+  // MediaPipe requires strictly increasing timestamps per task instance.
+  segStamp = Math.max(segStamp + 1, Math.round(ts));
+  try {
+    segmenter.segmentForVideo(video, segStamp, (result) => {
+      const mask = result.categoryMask;
+      if (!mask) return;
+      try {
+        person.update(mask, ts);
+      } finally {
+        mask.close();
+      }
+    });
+  } catch (err) {
+    // Ignore a dropped segmentation frame; the previous mask stays valid.
+  }
+}
+
+// Turn one detected hand into real 3D: where the fingertip is in space and
+// which way the barrel points, including straight at the lens.
+function resolveHand(i, w, h) {
+  const lm = hands[i];
+  const world = worldHands[i];
+  const pix = lm.map((pt) => ({ x: (1 - pt.x) * w, y: pt.y * h }));
+  const shape = world || lm;
+  const hand = classifyHand(pix, shape);
+
+  // Distance from the apparent width across the knuckles.
+  let z = null;
+  if (world) {
+    const a = world[LM.INDEX_MCP];
+    const b = world[LM.PINKY_MCP];
+    const meters = Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+    const pixels = Math.hypot(
+      pix[LM.INDEX_MCP].x - pix[LM.PINKY_MCP].x,
+      pix[LM.INDEX_MCP].y - pix[LM.PINKY_MCP].y
+    );
+    z = depthFromSpan(cam, meters, pixels);
+  }
+  if (!z || !isFinite(z)) z = 0.9;
+  z = Math.min(Math.max(z, 0.25), 4);
+
+  const tipPix = pix[LM.INDEX_TIP];
+  const tip3 = unproject(cam, tipPix.x, tipPix.y, z);
+
+  // True 3D aim. World landmark x is mirrored to match the selfie view, and z
+  // decreases toward the camera, so pointing at yourself shoots at the viewer.
+  let dir;
+  if (world) {
+    const a = world[LM.INDEX_MCP];
+    const b = world[LM.INDEX_TIP];
+    dir = normalize({ x: -(b.x - a.x), y: b.y - a.y, z: b.z - a.z });
+  } else {
+    dir = { x: hand.aim.x, y: hand.aim.y, z: 0 };
+  }
+  if (!(Math.abs(dir.x) + Math.abs(dir.y) + Math.abs(dir.z) > 0.1)) {
+    dir = { x: 0, y: -1, z: 0 };
+  }
+
+  return { hand, tip3, dir, z, tipPix };
+}
+
 function loop(ts) {
   if (!running) return;
   let dt = (ts - lastTs) / 1000;
   lastTs = ts;
-  if (dt > 0.05) dt = 0.05; // clamp after tab-switch stalls
+  if (dt > 0.05) dt = 0.05;
 
   const w = canvas.width;
   const h = canvas.height;
-  const bounds = { width: w, height: h };
 
-  // Run detection on a throttle and only on a fresh video frame, so heavy
-  // inference never blocks the render loop. The last result is reused between
-  // runs; the feed keeps painting every frame.
-  if (
-    ts - lastDetectMs >= DETECT_INTERVAL_MS &&
-    video.readyState >= 2 &&
-    video.currentTime !== lastVideoTime
-  ) {
-    lastDetectMs = ts;
-    lastVideoTime = video.currentTime;
-    try {
-      const res = landmarker.detectForVideo(video, ts);
-      lastHands = res.landmarks || [];
-      lastWorld = res.worldLandmarks || [];
-      const handed = res.handednesses || res.handedness || [];
-      lastLabels = lastHands.map((_, i) => handed[i]?.[0]?.categoryName || `h${i}`);
-    } catch (err) {
-      // A single bad inference frame must not kill the animation loop.
+  runDetection(ts);
+  runSegmentation(ts);
+
+  // Carry resting money with the body, and shake it loose when you move.
+  if (person.present && person.centre) {
+    const m = person.motion;
+    if (m.dx || m.dy) {
+      carryStuck(system, m.dx, m.dy);
+      person.motion.dx = 0;
+      person.motion.dy = 0;
+    }
+    if (m.speed > 0) {
+      shakeStuck(system, {
+        speed: m.speed,
+        dirX: Math.sign(m.dx || 0),
+        dirY: Math.sign(m.dy || 0),
+        dt,
+      });
     }
   }
-  const hands = lastHands;
-  const worldHands = lastWorld;
-  const labels = lastLabels;
 
   const seen = new Set();
-  const status = [];
-
   for (let i = 0; i < hands.length; i++) {
     const label = labels[i];
     seen.add(label);
-    // Positions and aim come from mirrored 2D pixel space (selfie view); the
-    // finger shape is judged from 3D world landmarks so it survives the barrel
-    // pointing toward or away from the camera.
-    const lmPix = hands[i].map((pt) => ({ x: (1 - pt.x) * w, y: pt.y * h }));
-    const shapeLm = worldHands[i] || hands[i];
-    const hand = classifyHand(lmPix, shapeLm);
+    const { hand, tip3, dir, z, tipPix } = resolveHand(i, w, h);
+
+    // The body sits a little behind the hand.
+    personZ = personZ * 0.9 + (z + 0.3) * 0.1;
+
+    // A quick hand sweep brushes money off you.
+    const track = handTracks.get(label);
+    const u = tipPix.x / w;
+    const v = tipPix.y / h;
+    if (track) {
+      const dtHand = Math.max(0.001, (ts - track.ts) / 1000);
+      const speed = Math.hypot(u - track.u, v - track.v) / dtHand;
+      if (speed > 0.35) knockStuck(system, { u, v, radius: 0.11, speed });
+    }
+    handTracks.set(label, { u, v, ts });
 
     if (!firingStates.has(label)) firingStates.set(label, createHandFiringState());
     const state = firingStates.get(label);
     const r = updateFiring(state, hand, ts);
 
     if (r.didFire) {
-      let aim = hand.aim;
-      if ((hand.aimMag || 0) < 0.05 * h) {
-        // Barrel points at/away from the camera: spray cash outward in all
-        // directions so it still reads as bursting toward the screen.
-        const a = Math.random() * Math.PI * 2;
-        aim = { x: Math.cos(a), y: Math.sin(a) };
-      }
-      const shell = fireCount % 4 === 0; // eject a casing every few shots
-      fireCount += 1;
-      spawnBurst(system, { tip: hand.tip, aim, nowMs: ts, bills: 2, shell });
+      spawnBurst(system, { origin: tip3, dir, count: 2 });
+      spawnFlash(system, tip3);
       audio.shot();
       if (ts - lastChaChingMs > 380) {
         audio.chaChing();
         lastChaChingMs = ts;
       }
-      shakeMag = 4; // gentle continuous rumble, not a per-shot kick
+      shakeMag = 3;
     }
-
-    if (hand.isGunShape) status.push({ cocked: r.firing });
   }
 
-  // Advance grace timers for hands that vanished this frame.
   for (const [label, state] of firingStates) {
     if (!seen.has(label)) updateFiring(state, null, ts);
   }
 
-  // "Make it rain": drop bills from the top regardless of hands.
   if (raining && ts - lastRainMs > RAIN_INTERVAL_MS) {
     lastRainMs = ts;
-    spawnRain(system, { width: w, count: 2 });
+    spawnRain(system, { cam, count: 2 });
   }
 
-  step(system, dt, bounds);
+  step(system, dt, {
+    cam,
+    time: ts / 1000,
+    wind: true,
+    personZ: person.present ? personZ : null,
+    sampleMask: person.present ? person.sampler : null,
+  });
 
-  // Decay recoil shake.
   shakeMag = Math.max(0, shakeMag - 40 * dt);
   shake.x = (Math.random() - 0.5) * shakeMag;
   shake.y = (Math.random() - 0.5) * shakeMag;
 
-  renderer.draw({ video, particles: system.particles, bounds, shake, status });
+  renderer.draw({
+    video,
+    cam,
+    particles: system.particles,
+    personStencil: person.present ? person.canvas : null,
+    personZ: person.present ? personZ : null,
+    shake,
+  });
+
   requestAnimationFrame(loop);
 }
 
 el('startBtn').addEventListener('click', start);
 el('retryBtn').addEventListener('click', start);
+
 soundBtn.addEventListener('click', () => {
   const on = !audio.isEnabled();
   audio.setEnabled(on);

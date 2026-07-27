@@ -1,50 +1,116 @@
 import { describe, expect, test } from 'vitest';
 import { createRenderer } from '../src/render.js';
+import { createCamera } from '../src/camera3d.js';
+
+const cam = createCamera(1280, 720);
 
 function fakeCtx() {
-  const calls = { clearRect: 0, fill: 0, drawImage: 0 };
+  const calls = { clearRect: 0, fill: 0, drawImage: 0, stroke: 0, fillText: 0, transform: 0 };
   const grad = { addColorStop() {} };
   return {
     calls,
-    setTransform() {},
+    setTransform() {}, transform() { calls.transform++; },
     clearRect() { calls.clearRect++; },
-    save() {}, restore() {},
-    translate() {}, scale() {}, rotate() {},
-    beginPath() {}, closePath() {}, moveTo() {}, arc() {}, arcTo() {},
-    fillRect() {}, strokeRect() {}, stroke() {},
+    save() {}, restore() {}, translate() {}, scale() {}, rotate() {},
+    beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, arc() {}, arcTo() {}, ellipse() {},
+    fillRect() {}, strokeRect() {},
+    stroke() { calls.stroke++; },
     fill() { calls.fill++; },
     drawImage() { calls.drawImage++; },
-    fillText() {},
+    fillText() { calls.fillText++; },
     createLinearGradient() { return grad; },
     createRadialGradient() { return grad; },
     set fillStyle(_) {}, set strokeStyle(_) {}, set lineWidth(_) {},
     set globalAlpha(_) {}, set font(_) {}, set textAlign(_) {}, set textBaseline(_) {},
+    set globalCompositeOperation(_) {}, set imageSmoothingEnabled(_) {},
   };
 }
 
 function fakeCanvas() {
   const ctx = fakeCtx();
-  return { ctx, getContext: () => ctx };
+  return { ctx, width: 0, height: 0, getContext: () => ctx };
 }
 
-describe('createRenderer', () => {
-  test('draws a frame with one of each particle kind without throwing', () => {
+const video = { readyState: 4 };
+
+function bill(pos, extra = {}) {
+  return {
+    kind: 'bill',
+    p: pos,
+    n: { x: 0, y: 0, z: -1 },
+    t: { x: 1, y: 0, z: 0 },
+    life: 10,
+    ...extra,
+  };
+}
+
+describe('renderer', () => {
+  test('draws a frame of notes without throwing', () => {
     const canvas = fakeCanvas();
-    const r = createRenderer(canvas);
-    const particles = [
-      { kind: 'flash', x: 10, y: 10, r: 40, rot: 0, life: 0.05, maxLife: 0.09 },
-      { kind: 'smoke', x: 10, y: 10, r: 20, rot: 0, life: 0.3, maxLife: 0.5 },
-      { kind: 'shell', x: 10, y: 10, rot: 1, life: 1, maxLife: 1.4 },
-      { kind: 'bill', x: 10, y: 10, rot: 0.3, flip: 0.5, life: 2, maxLife: 2.6 },
-    ];
+    const r = createRenderer(canvas, { createCanvas: fakeCanvas });
     r.draw({
-      video: null,
-      particles,
-      bounds: { width: 200, height: 200 },
+      video,
+      cam,
+      particles: [
+        bill({ x: 0, y: 0, z: 1.5 }),
+        bill({ x: 0.3, y: -0.2, z: 3 }),
+        { kind: 'flash', p: { x: 0, y: 0, z: 1 }, r: 0.05, life: 0.05, maxLife: 0.07 },
+      ],
       shake: { x: 0, y: 0 },
-      status: [{ cocked: true }, { cocked: false }],
     });
     expect(canvas.ctx.calls.clearRect).toBe(1);
+    expect(canvas.ctx.calls.drawImage).toBeGreaterThan(0); // the camera feed
     expect(canvas.ctx.calls.fill).toBeGreaterThan(0);
+  });
+
+  test('a note edge-on is drawn as a hairline rather than vanishing', () => {
+    const canvas = fakeCanvas();
+    const r = createRenderer(canvas, { createCanvas: fakeCanvas });
+    // Face normal along the view axis rotated so the short axis points at us.
+    r.draw({
+      video,
+      cam,
+      particles: [bill({ x: 0, y: 0, z: 1.5 }, { n: { x: 0, y: 1, z: 0 }, t: { x: 1, y: 0, z: 0 } })],
+      shake: { x: 0, y: 0 },
+    });
+    expect(canvas.ctx.calls.stroke).toBeGreaterThan(0);
+  });
+
+  test('with a person stencil the cut-out is composited for occlusion', () => {
+    const canvas = fakeCanvas();
+    const r = createRenderer(canvas, { createCanvas: fakeCanvas });
+    const before = canvas.ctx.calls.drawImage;
+    r.draw({
+      video,
+      cam,
+      particles: [
+        bill({ x: 0, y: 0, z: 3.0 }),  // behind the person
+        bill({ x: 0, y: 0, z: 0.8 }),  // in front of the person
+      ],
+      personStencil: { width: 16, height: 16 },
+      personZ: 1.5,
+      shake: { x: 0, y: 0 },
+    });
+    // Feed, plus the composited person cut-out.
+    expect(canvas.ctx.calls.drawImage).toBeGreaterThan(before + 1);
+  });
+
+  test('notes behind the camera are skipped', () => {
+    const canvas = fakeCanvas();
+    const r = createRenderer(canvas, { createCanvas: fakeCanvas });
+    r.draw({ video, cam, particles: [bill({ x: 0, y: 0, z: -1 })], shake: { x: 0, y: 0 } });
+    expect(canvas.ctx.calls.transform).toBe(0); // nothing drawn in note space
+  });
+
+  test('a note resting on the person is placed from its screen anchor', () => {
+    const canvas = fakeCanvas();
+    const r = createRenderer(canvas, { createCanvas: fakeCanvas });
+    r.draw({
+      video,
+      cam,
+      particles: [bill({ x: 0, y: 0, z: 0 }, { stuck: true, u: 0.5, v2: 0.5, restZ: 1.4 })],
+      shake: { x: 0, y: 0 },
+    });
+    expect(canvas.ctx.calls.transform).toBeGreaterThan(0);
   });
 });
