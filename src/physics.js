@@ -64,13 +64,35 @@ function enforceCap(sys) {
   });
 }
 
+// Ambient "make it rain": bills that fall gently from the top of the screen,
+// independent of the finger gun. Reuses the bill look; step() gives them a
+// slow, capped descent instead of the fast gun-fire ballistics.
+export function spawnRain(sys, { width, count = 1, rng = Math.random }) {
+  for (let i = 0; i < count; i++) {
+    sys.particles.push({
+      kind: 'bill', rain: true,
+      x: rng() * width, y: -40,
+      vx: (rng() - 0.5) * 80, vy: 60 + rng() * 90,
+      rot: rng() * Math.PI * 2, vrot: (rng() - 0.5) * 6,
+      flip: rng() * Math.PI * 2, vflip: 3 + rng() * 5,
+      life: 20, maxLife: 20,
+    });
+  }
+  enforceCap(sys);
+}
+
 export function step(sys, dt, bounds) {
   const dragFactor = Math.pow(DRAG, dt);
   for (const p of sys.particles) {
     if (p.kind === 'bill' || p.kind === 'shell') {
-      p.vy += GRAVITY * dt;
-      p.vx *= dragFactor;
-      p.vy *= dragFactor;
+      if (p.rain) {
+        p.vy = Math.min(p.vy + 520 * dt, 340); // mild gravity toward a terminal fall speed
+        p.vx *= Math.pow(0.2, dt);             // ease off the initial sideways drift
+      } else {
+        p.vy += GRAVITY * dt;
+        p.vx *= dragFactor;
+        p.vy *= dragFactor;
+      }
     }
     p.x += p.vx * dt;
     p.y += p.vy * dt;

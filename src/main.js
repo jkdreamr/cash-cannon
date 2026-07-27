@@ -1,7 +1,7 @@
 import { HandLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
 import { classifyHand } from './gesture.js';
 import { createHandFiringState, updateFiring } from './firing.js';
-import { createSystem, spawnBurst, step } from './physics.js';
+import { createSystem, spawnBurst, spawnRain, step } from './physics.js';
 import { createRenderer } from './render.js';
 import { createAudio } from './audio.js';
 
@@ -13,6 +13,7 @@ const WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/w
 // last result between runs. Rendering still happens every frame, which keeps
 // the camera feed smooth instead of freezing while inference runs.
 const DETECT_INTERVAL_MS = 55;
+const RAIN_INTERVAL_MS = 90; // how often "make it rain" drops a batch of bills
 
 const el = (id) => document.getElementById(id);
 const canvas = el('feed');
@@ -21,6 +22,7 @@ const startOverlay = el('start');
 const errorOverlay = el('error');
 const errorMsg = el('errorMsg');
 const soundBtn = el('sound');
+const rainBtn = el('rain');
 
 const renderer = createRenderer(canvas);
 const audio = createAudio();
@@ -38,6 +40,8 @@ let lastDetectMs = 0;   // detection throttle clock
 let lastHands = [];     // most recent detection, reused between throttled runs
 let lastWorld = [];
 let lastLabels = [];
+let raining = false;    // "make it rain" toggle
+let lastRainMs = 0;
 const shake = { x: 0, y: 0 };
 
 function showError(msg) {
@@ -122,6 +126,7 @@ async function start() {
   hideError();
   startOverlay.classList.add('hidden');
   soundBtn.style.display = 'flex';
+  rainBtn.style.display = 'inline-flex';
   resizeCanvas();
   running = true;
   lastTs = performance.now();
@@ -206,6 +211,12 @@ function loop(ts) {
     if (!seen.has(label)) updateFiring(state, null, ts);
   }
 
+  // "Make it rain": drop bills from the top regardless of hands.
+  if (raining && ts - lastRainMs > RAIN_INTERVAL_MS) {
+    lastRainMs = ts;
+    spawnRain(system, { width: w, count: 2 });
+  }
+
   step(system, dt, bounds);
 
   // Decay recoil shake.
@@ -225,4 +236,10 @@ soundBtn.addEventListener('click', () => {
   soundBtn.classList.toggle('muted', !on);
   soundBtn.setAttribute('aria-pressed', String(on));
   soundBtn.setAttribute('aria-label', on ? 'Mute sound' : 'Unmute sound');
+});
+
+rainBtn.addEventListener('click', () => {
+  raining = !raining;
+  rainBtn.classList.toggle('on', raining);
+  rainBtn.setAttribute('aria-pressed', String(raining));
 });
