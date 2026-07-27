@@ -34,6 +34,18 @@ function fakeCanvas() {
   return { ctx, width: 0, height: 0, getContext: () => ctx };
 }
 
+// The note artwork is pre-rendered from real canvases at startup. These tests
+// exercise the geometry, so a stub sheet stands in for the printed textures.
+const fakeArt = {
+  front: [{ width: 512, height: 218 }],
+  back: [{ width: 512, height: 218 }],
+  width: 512,
+  height: 218,
+  variants: 1,
+};
+
+const renderer = (canvas) => createRenderer(canvas, { createCanvas: fakeCanvas, art: fakeArt });
+
 const video = { readyState: 4 };
 
 function bill(pos, extra = {}) {
@@ -50,7 +62,7 @@ function bill(pos, extra = {}) {
 describe('renderer', () => {
   test('draws a frame of notes without throwing', () => {
     const canvas = fakeCanvas();
-    const r = createRenderer(canvas, { createCanvas: fakeCanvas });
+    const r = renderer(canvas);
     r.draw({
       video,
       cam,
@@ -61,18 +73,34 @@ describe('renderer', () => {
       shake: { x: 0, y: 0 },
     });
     expect(canvas.ctx.calls.clearRect).toBe(1);
-    expect(canvas.ctx.calls.drawImage).toBeGreaterThan(0); // the camera feed
-    expect(canvas.ctx.calls.fill).toBeGreaterThan(0);
+    // The camera feed plus one blit of printed artwork per note.
+    expect(canvas.ctx.calls.drawImage).toBe(3);
+    expect(canvas.ctx.calls.transform).toBe(2);
   });
 
   test('a note edge-on is drawn as a hairline rather than vanishing', () => {
     const canvas = fakeCanvas();
-    const r = createRenderer(canvas, { createCanvas: fakeCanvas });
-    // Face normal along the view axis rotated so the short axis points at us.
+    const r = renderer(canvas);
+    // Short axis pointing down the view axis, far enough away that the face
+    // collapses to under a pixel: what you see is the paper edge.
     r.draw({
       video,
       cam,
-      particles: [bill({ x: 0, y: 0, z: 1.5 }, { n: { x: 0, y: 1, z: 0 }, t: { x: 1, y: 0, z: 0 } })],
+      particles: [bill({ x: 0, y: 0, z: 6 }, { n: { x: 0, y: 1, z: 0 }, t: { x: 1, y: 0, z: 0 } })],
+      shake: { x: 0, y: 0 },
+    });
+    expect(canvas.ctx.calls.stroke).toBeGreaterThan(0);
+    expect(canvas.ctx.calls.transform).toBe(0); // no face to blit
+  });
+
+  test('a note turned side-on still shows its edge instead of disappearing', () => {
+    // The mirror image of the case above: the LONG axis points at the lens.
+    const canvas = fakeCanvas();
+    const r = renderer(canvas);
+    r.draw({
+      video,
+      cam,
+      particles: [bill({ x: 0, y: 0, z: 6 }, { n: { x: 0, y: 1, z: 0 }, t: { x: 0, y: 0, z: 1 } })],
       shake: { x: 0, y: 0 },
     });
     expect(canvas.ctx.calls.stroke).toBeGreaterThan(0);
@@ -80,7 +108,7 @@ describe('renderer', () => {
 
   test('with a person stencil the cut-out is composited for occlusion', () => {
     const canvas = fakeCanvas();
-    const r = createRenderer(canvas, { createCanvas: fakeCanvas });
+    const r = renderer(canvas);
     const before = canvas.ctx.calls.drawImage;
     r.draw({
       video,
@@ -99,7 +127,7 @@ describe('renderer', () => {
 
   test('notes behind the camera are skipped', () => {
     const canvas = fakeCanvas();
-    const r = createRenderer(canvas, { createCanvas: fakeCanvas });
+    const r = renderer(canvas);
     r.draw({ video, cam, particles: [bill({ x: 0, y: 0, z: -1 })], shake: { x: 0, y: 0 } });
     expect(canvas.ctx.calls.transform).toBe(0); // nothing drawn in note space
   });
@@ -116,7 +144,7 @@ describe('renderer', () => {
     ];
     for (const o of orientations) {
       const canvas = fakeCanvas();
-      const r = createRenderer(canvas, { createCanvas: fakeCanvas });
+      const r = renderer(canvas);
       r.draw({ video, cam, particles: [bill({ x: 0, y: 0, z: 1.2 }, o)], shake: { x: 0, y: 0 } });
       expect(canvas.ctx.transforms.length).toBeGreaterThan(0);
       for (const m of canvas.ctx.transforms) {
@@ -128,7 +156,7 @@ describe('renderer', () => {
 
   test('a note resting on the person is placed from its screen anchor', () => {
     const canvas = fakeCanvas();
-    const r = createRenderer(canvas, { createCanvas: fakeCanvas });
+    const r = renderer(canvas);
     r.draw({
       video,
       cam,

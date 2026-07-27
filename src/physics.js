@@ -20,9 +20,19 @@ const MASS = 0.001;  // kg, about one gram
 const CD_FACE = 1.28; // flat plate normal to the flow
 const CD_EDGE = 0.06;
 const CL = 0.9;       // peak lift coefficient of a flat plate
-const INERTIA = 1.0e-6;                              // kg m^2, thin plate
+// Thin plate about its centre: I = m(a^2 + b^2)/12 = 2.391e-6 kg m^2. With the
+// true value the aligning torque gives a 1.68 Hz flutter at terminal velocity,
+// which is exactly the rate real banknotes flutter at.
+const INERTIA = (MASS * (BILL_LONG * BILL_LONG + BILL_SHORT * BILL_SHORT)) / 12;
 const TORQUE_K = 0.5 * RHO * CL * AREA * (BILL_LONG * 0.25); // pressure centre offset
-const ANG_DAMP = 1.2; // 1/s, leaves the flutter lively but bounded
+// The aligning torque is a spring. Too little damping and it is a numerically
+// undamped oscillator that explicit integration cannot resolve, which makes
+// notes snap between orientations instead of fluttering. This gives zeta ~0.14
+// at terminal velocity: sustained flutter, bounded amplitude.
+const ANG_DAMP = 3.0;
+// Real notes leaving a money gun tumble at 2 to 10 rev/s. Nothing should ever
+// spin faster than this, whatever the integrator does.
+const MAX_SPIN = 70; // rad/s
 
 // Bills rest on a person when they arrive within this depth slab of the body.
 // A torso is roughly this deep front to back, so notes arriving anywhere in
@@ -70,6 +80,7 @@ function makeBill(p, v, n, t, rng) {
     // A small constant torque so some notes tumble continuously, as real ones do.
     bias: { x: spin(rng, 4), y: spin(rng, 4), z: spin(rng, 4) },
     face: rng() < 0.5 ? 0 : 1,
+    variant: Math.floor(rng() * 6), // which printed note this is, so no clones
     tone: rng(), // slight per-note paper variation, no two notes look identical
     stuck: false,
     stickTried: false,
@@ -77,39 +88,64 @@ function makeBill(p, v, n, t, rng) {
   };
 }
 
-// Money gun: notes leave the muzzle edge-on (like a real bill feeder), so they
-// fly before air resistance catches them and turns them broadside.
-export function spawnBurst(sys, { origin, dir, count = 2, speed = 6.2, rng = Math.random }) {
+// Money gun. A real one drives a rubber roller against the face of the top note
+// and shears it off the stack, so notes leave one at a time, short edge first
+// (knife-on to the airflow), and because the drive friction acts off the note's
+// mid-plane every note leaves tumbling end over end about its short axis.
+export function spawnBurst(sys, {
+  origin, dir, count = 1, speed = 3.6, muzzleOffset = 0.1, rng = Math.random,
+}) {
   const d = normalize(dir);
   if (len(d) < 0.5) return;
   for (let i = 0; i < count; i++) {
-    const spread = 0.16;
+    const spread = 0.14;
     const jitter = normalize({
       x: d.x + (rng() - 0.5) * spread,
-      y: d.y + (rng() - 0.5) * spread - 0.06, // slight upward bias, the muzzle rises
+      y: d.y + (rng() - 0.5) * spread - 0.05, // vendors tell you to aim up
       z: d.z + (rng() - 0.5) * spread,
     });
-    const s = speed * (0.75 + rng() * 0.5);
-    // Edge-on: the face normal starts perpendicular to travel.
+    const s = speed * (0.8 + rng() * 0.4);
+
+    // Leave the muzzle knife-on: the face normal is perpendicular to travel.
     const { n, t } = billFrame(perpendicular(jitter), rng);
-    sys.particles.push(
-      makeBill(
-        { x: origin.x, y: origin.y, z: origin.z },
-        scale(jitter, s),
-        n,
-        t,
-        rng
-      )
+    const bill = makeBill(
+      {
+        x: origin.x + d.x * muzzleOffset,
+        y: origin.y + d.y * muzzleOffset,
+        z: origin.z + d.z * muzzleOffset,
+      },
+      scale(jitter, s),
+      n,
+      t,
+      rng
     );
+
+    // End-over-end about the short (transverse) axis, 2 to 10 rev/s.
+    const axis = cross(n, t);
+    const rate = (2 + rng() * 8) * Math.PI * 2 * (rng() < 0.5 ? -1 : 1);
+    bill.w = { x: axis.x * rate, y: axis.y * rate, z: axis.z * rate };
+    bill.bias = { x: bill.bias.x * 0.3, y: bill.bias.y * 0.3, z: bill.bias.z * 0.3 };
+    sys.particles.push(bill);
   }
   enforceCap(sys);
 }
 
 // Ambient rain: notes drift down from above the frame across a range of depths,
 // so some pass in front of the person and some behind.
-export function spawnRain(sys, { cam, count = 1, minZ = 0.9, maxZ = 5, rng = Math.random }) {
+export function spawnRain(sys, { cam, count = 1, minZ = 0.9, maxZ = 5, focusZ = null, rng = Math.random }) {
   for (let i = 0; i < count; i++) {
-    const z = minZ + rng() * (maxZ - minZ);
+    let z;
+    if (focusZ != null) {
+      // Money thrown over someone falls around them, not spread evenly through
+      // the whole room. Two samples give a triangular distribution centred on
+      // the person, so plenty passes close enough to actually land on them
+      // while some still falls well in front and well behind.
+      const spread = 1.5;
+      z = focusZ + (rng() + rng() - 1) * spread;
+      z = Math.min(Math.max(z, minZ), maxZ);
+    } else {
+      z = minZ + rng() * (maxZ - minZ);
+    }
     const ext = viewExtent(cam, z);
     const p = {
       x: (rng() * 2 - 1) * ext.halfW * 1.25,
@@ -202,6 +238,16 @@ function stepBill(p, h, env) {
   p.w.y *= damp;
   p.w.z *= damp;
 
+  // Hard ceiling on spin. No physical note tumbles faster than this, and it
+  // stops any numerical excursion from becoming a visible spasm.
+  const spinMag = len(p.w);
+  if (spinMag > MAX_SPIN) {
+    const k = MAX_SPIN / spinMag;
+    p.w.x *= k;
+    p.w.y *= k;
+    p.w.z *= k;
+  }
+
   p.v.x += (fx / MASS) * h;
   p.v.y += (fy / MASS) * h;
   p.v.z += (fz / MASS) * h;
@@ -247,16 +293,33 @@ function tryStick(sys, p, env, rng) {
   }
   if (nearby > 0 || resting >= MAX_STUCK) return;
 
-  // Slow notes settle; fast ones glance off. Upward-facing surfaces (shoulders,
-  // head, forearms) hold money, near-vertical ones let it slide away.
+  // A note stays only where the local surface tilt is below the friction angle
+  // arctan(mu). That is mass-free and scale-free: it slides whenever
+  // tan(tilt) > mu, whatever the note weighs. Paper on skin is mu ~0.45 and on
+  // cloth ~0.35, so anything steeper than roughly 20 to 25 degrees sheds it.
+  // On a standing person very little qualifies: the shoulder shelf, the top of
+  // the head, and a forearm held level. A cheek or a chest is near vertical and
+  // in reality holds nothing at all.
+  const site = env.stickTest ? env.stickTest(u, v) : null;
+  let hold;
+  if (env.stickTest) {
+    if (!site) return; // steeper than the friction angle, it slides off
+    hold = site.hold;
+  } else {
+    // Without body tracking, fall back to the silhouette's upper boundary as a
+    // proxy for an upward-facing surface.
+    hold = !sampleMask(u, v - 0.035) ? 1 : 0.12;
+  }
+
+  // Slow notes settle; fast ones glance off.
   const speed = len(p.v);
-  const onTopSurface = !sampleMask(u, v - 0.035);
-  let chance = clamp(1.05 - speed / 4, 0.06, 0.92);
-  if (!onTopSurface) chance *= 0.32; // a chest is steep, but not frictionless
+  const chance = clamp((1.05 - speed / 4) * hold, 0.02, 0.94);
   if (rng() > chance) return;
 
+  const onTopSurface = hold > 0.5;
   p.stuck = true;
   p.top = onTopSurface;
+  p.site = site ? site.kind : 'silhouette';
   p.u = u;
   p.v2 = v;
   p.restZ = personZ;
@@ -278,12 +341,22 @@ function tryStick(sys, p, env, rng) {
 export function step(sys, dt, env = {}) {
   const rng = env.rng || Math.random;
   const h = Math.min(dt, 0.05);
-  const sub2 = h > 0.024 ? 2 : 1;
-  const hs = h / sub2;
 
   for (const p of sys.particles) {
     if (p.stuck) continue;
-    for (let s = 0; s < sub2; s++) stepBill(p, hs, env);
+
+    // The aligning torque behaves as a spring whose stiffness grows with the
+    // square of airspeed, so a fast note oscillates far quicker than a drifting
+    // one. Explicit integration is only stable while the step stays well inside
+    // that period, so each note gets the substeps its own speed demands. A
+    // single fixed step makes fast notes snap between orientations, and at low
+    // frame rates it diverges outright.
+    const speed = len(p.v);
+    const omega = Math.sqrt((TORQUE_K * speed * speed) / INERTIA);
+    const sub = Math.max(1, Math.min(8, Math.ceil((h * omega) / 0.35)));
+    const hs = h / sub;
+    for (let s = 0; s < sub; s++) stepBill(p, hs, env);
+
     p.life -= h;
     tryStick(sys, p, env, rng);
   }
@@ -307,6 +380,67 @@ function cull(sys, env) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Body-frame binding.
+//
+// A note resting on someone must move with the part of them it is lying on, not
+// with the average of their whole silhouette. Each resting note is stored in
+// coordinates of a frame built from the shoulder line, so when the person
+// walks, leans, turns or moves closer the note follows by construction:
+// translation, rotation and scale all come free from the change of basis.
+
+// Screen point to body-local coordinates.
+export function toBody(basis, u, v) {
+  const dx = u - basis.ox;
+  const dy = v - basis.oy;
+  const det = basis.ex.x * basis.ey.y - basis.ex.y * basis.ey.x;
+  // Turning side-on collapses the shoulder line and the basis degenerates.
+  if (Math.abs(det) < 1e-6) return null;
+  return {
+    a: (dx * basis.ey.y - dy * basis.ey.x) / det,
+    b: (basis.ex.x * dy - basis.ex.y * dx) / det,
+  };
+}
+
+export function fromBody(basis, a, b) {
+  return {
+    u: basis.ox + a * basis.ex.x + b * basis.ey.x,
+    v: basis.oy + a * basis.ex.y + b * basis.ey.y,
+  };
+}
+
+// Record where each newly rested note sits relative to the body.
+export function bindStuckToBody(sys, basis) {
+  if (!basis) return;
+  for (const p of sys.particles) {
+    if (!p.stuck || p.bound) continue;
+    const local = toBody(basis, p.u, p.v2);
+    if (!local) continue;
+    p.ba = local.a;
+    p.bb = local.b;
+    p.brot = basis.rot;
+    p.bound = true;
+  }
+}
+
+// Move every bound note to where its body point is now.
+export function applyBodyBasis(sys, basis) {
+  if (!basis) return;
+  for (const p of sys.particles) {
+    if (!p.stuck || !p.bound) continue;
+    const s = fromBody(basis, p.ba, p.bb);
+    if (!isFinite(s.u) || !isFinite(s.v)) continue;
+    p.u = s.u;
+    p.v2 = s.v;
+    // Roll the note with the body, so money on a shoulder tips as you lean.
+    const dr = basis.rot - p.brot;
+    if (Math.abs(dr) > 1e-4) {
+      p.t = rotateAxis(p.t, p.n, dr);
+      p.brot = basis.rot;
+    }
+  }
+}
+
 // Move notes resting on the person as the person moves (normalised screen units).
 export function carryStuck(sys, du, dv) {
   for (const p of sys.particles) {
@@ -320,14 +454,14 @@ export function carryStuck(sys, du, dv) {
 // widths per second. Ordinary movement leaves the money where it is; it takes
 // a deliberate shake to shed it, and even then it comes off over a moment
 // rather than all at once.
-export function shakeStuck(sys, { speed, dirX = 0, dirY = 0, dt, rng = Math.random }) {
+export function shakeStuck(sys, { speed, dirX = 0, dirY = 0, dt, cam = null, rng = Math.random }) {
   const excess = speed - 0.35;
   if (excess <= 0) return 0;
   let freed = 0;
   for (const p of sys.particles) {
     if (!p.stuck) continue;
     if (rng() < clamp(excess * 1.1, 0, 0.6) * dt * 6) {
-      release(p, { x: dirX * 1.6, y: dirY * 1.6 + 0.4, z: 0 }, rng);
+      release(p, { x: dirX * 1.6, y: dirY * 1.6 + 0.4, z: 0 }, rng, cam);
       freed += 1;
     }
   }
@@ -335,27 +469,38 @@ export function shakeStuck(sys, { speed, dirX = 0, dirY = 0, dt, rng = Math.rand
 }
 
 // A hand sweeping across the body brushes notes off.
-export function knockStuck(sys, { u, v, radius = 0.09, speed = 0, rng = Math.random }) {
+export function knockStuck(sys, { u, v, radius = 0.09, speed = 0, cam = null, rng = Math.random }) {
   if (speed < 0.25) return 0;
   let freed = 0;
   for (const p of sys.particles) {
     if (!p.stuck) continue;
     if (Math.hypot(p.u - u, p.v2 - v) > radius) continue;
-    release(p, { x: (rng() - 0.5) * 1.2, y: 0.5 + rng() * 0.5, z: -0.3 }, rng);
+    release(p, { x: (rng() - 0.5) * 1.2, y: 0.5 + rng() * 0.5, z: -0.3 }, rng, cam);
     freed += 1;
   }
   return freed;
 }
 
-function release(p, vel, rng) {
+function release(p, vel, rng, cam) {
   p.stuck = false;
   p.stickTried = true; // do not immediately re-stick to the same spot
+
+  // Resume free flight from where the note is NOW, not from wherever it first
+  // landed. While resting, a note is tracked by its screen anchor and follows
+  // the body, but p.p stays frozen. Without rebuilding it here, shaking money
+  // off after moving would make it vanish and reappear at the old spot.
+  const z = (p.restZ || p.p.z) - BODY_SLAB * 0.7;
+  if (cam && p.u != null && p.v2 != null) {
+    p.p.x = ((p.u * cam.width - cam.cx) * z) / cam.f;
+    p.p.y = ((p.v2 * cam.height - cam.cy) * z) / cam.f;
+  }
+  p.p.z = z;
+
+  p.bound = false;
   p.v = vel;
   p.w = { x: (rng() - 0.5) * 8, y: (rng() - 0.5) * 8, z: (rng() - 0.5) * 8 };
   p.bias = { x: (rng() - 0.5) * 6, y: (rng() - 0.5) * 6, z: (rng() - 0.5) * 6 };
   p.life = Math.max(p.life, 8);
-  // Nudge it just clear of the body so it falls in front rather than inside.
-  p.p.z = (p.restZ || p.p.z) - BODY_SLAB * 0.7;
 }
 
 // Screen position of a note resting on the person, in world space.

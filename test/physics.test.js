@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import {
   createSystem, spawnBurst, spawnRain, step,
-  carryStuck, shakeStuck, knockStuck, countStuck, MAX_PARTICLES,
+  carryStuck, shakeStuck, knockStuck, countStuck, stuckWorld, MAX_PARTICLES,
 } from '../src/physics.js';
-import { createCamera } from '../src/camera3d.js';
+import { createCamera, project } from '../src/camera3d.js';
 import { len } from '../src/vec3.js';
 
 const cam = createCamera(1280, 720);
@@ -47,13 +47,15 @@ describe('banknote aerodynamics', () => {
     const shoot = (normalAlongTravel) => {
       const sys = createSystem();
       const origin = { x: 0, y: 0, z: 1.5 };
-      spawnBurst(sys, { origin, dir: { x: 1, y: 0, z: 0 }, count: 1, rng: fixedRng });
+      spawnBurst(sys, { origin, dir: { x: 1, y: 0, z: 0 }, count: 1, speed: 6, rng: fixedRng });
       const bill = sys.particles.find((p) => p.kind === 'bill');
+      const start = bill.p.x;
       if (normalAlongTravel) bill.n = { x: 1, y: 0, z: 0 }; // broadside to travel
+      // Hold the orientation still so this isolates drag anisotropy.
       bill.bias = { x: 0, y: 0, z: 0 };
       bill.w = { x: 0, y: 0, z: 0 };
       for (let i = 0; i < 24; i++) step(sys, 1 / 240, { cam, wind: false, time: 0 });
-      return sys.particles[0] ? sys.particles[0].p.x - origin.x : 0;
+      return sys.particles[0] ? sys.particles[0].p.x - start : 0;
     };
     expect(shoot(false)).toBeGreaterThan(shoot(true) * 3);
   });
@@ -103,6 +105,20 @@ describe('depth behaviour', () => {
     const personZ = 1.4;
     expect(depths.some((z) => z < personZ)).toBe(true); // in front of the person
     expect(depths.some((z) => z > personZ)).toBe(true); // behind the person
+  });
+
+  test('rain can be focused around the person while still passing front and behind', () => {
+    const sys = createSystem();
+    spawnRain(sys, { cam, count: 300, focusZ: 1.5, rng: lcg(23) });
+    const z = sys.particles.map((p) => p.p.z);
+    const near = z.filter((d) => Math.abs(d - 1.5) < 0.28).length / z.length;
+    // Concentrated on the person, so a decent share can actually land on them.
+    expect(near).toBeGreaterThan(0.12);
+    // But still genuinely three-dimensional: some in front, some behind.
+    expect(z.some((d) => d < 1.2)).toBe(true);
+    expect(z.some((d) => d > 1.8)).toBe(true);
+    expect(Math.min(...z)).toBeGreaterThanOrEqual(0.9);
+    expect(Math.max(...z)).toBeLessThanOrEqual(5);
   });
 
   test('notes that fly past the lens are removed', () => {
@@ -230,6 +246,28 @@ describe('landing on the person', () => {
     expect(countStuck(sys)).toBe(1);
     knockStuck(sys, { u: bill.u, v: bill.v2, speed: 2.0 }); // quick swipe
     expect(countStuck(sys)).toBe(0);
+  });
+
+  test('money knocked off stays where it was, instead of teleporting back', () => {
+    const sys = createSystem();
+    spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
+    sys.particles[0].p = { x: 0, y: -0.2, z: 1.4 };
+    run(sys, 3, personEnv());
+    const bill = sys.particles.find((p) => p.stuck);
+    expect(bill).toBeTruthy();
+
+    // The person walks a quarter of the frame to the right, carrying it along.
+    for (let i = 0; i < 50; i++) carryStuck(sys, 0.005, -0.001);
+    const restingAt = project(cam, stuckWorld(bill, cam));
+
+    knockStuck(sys, { u: bill.u, v: bill.v2, speed: 2.0, cam });
+    expect(bill.stuck).toBe(false);
+
+    // It must resume flight from where it was resting, not from where it
+    // originally landed. Without this it jumps hundreds of pixels.
+    const freeAt = project(cam, bill.p);
+    expect(Math.abs(freeAt.x - restingAt.x)).toBeLessThan(2);
+    expect(Math.abs(freeAt.y - restingAt.y)).toBeLessThan(2);
   });
 
   test('a released note falls in front of the body, not inside it', () => {
