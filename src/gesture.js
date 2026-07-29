@@ -66,6 +66,25 @@ function angleDeg(a, b) {
 // shapeLm : 3D landmarks (MediaPipe worldLandmarks) used for the finger-shape
 //           test; defaults to screenLm so callers/tests can pass one array.
 export function classifyHand(screenLm, shapeLm = screenLm) {
+  // A short or missing landmark set would otherwise throw from inside the
+  // animation loop and stop the whole scene. MediaPipe always returns 21, but
+  // this is the boundary where an outside library's output enters, so it is
+  // checked rather than assumed.
+  if (!screenLm || screenLm.length < 21 || !shapeLm || shapeLm.length < 21) {
+    return {
+      isGunShape: false,
+      thumbGap: 0,
+      thumbAngle: 0,
+      tip: { x: 0, y: 0 },
+      aim: { x: 0, y: 0 },
+      aimMag: 0,
+      fingers: {
+        indexExtended: false, middleExtended: false,
+        ringExtended: false, pinkyExtended: false,
+      },
+    };
+  }
+
   const indexExtended = fingerExtended(
     shapeLm, LM.INDEX_MCP, LM.INDEX_PIP, LM.INDEX_TIP, BARREL_STRAIGHT
   );

@@ -47,6 +47,10 @@ const FAR_CLIP = 12;    // m
 // Tuned so notes may touch and overlap like real scattered money, but the
 // closest pair still sits about half a note apart rather than stacking.
 const STUCK_SEPARATION = 0.04; // normalised screen units
+// How far above a point to look for open air when deciding whether the surface
+// faces upward. Big enough to ride over a ragged mask edge, small enough that a
+// forehead never qualifies.
+const TOP_PROBE = 0.035;
 const MAX_STUCK = 18;
 
 export const MAX_PARTICLES = 240;
@@ -313,23 +317,24 @@ function tryStick(sys, p, env, rng) {
   // arctan(mu). That is mass-free and scale-free: it slides whenever
   // tan(tilt) > mu, whatever the note weighs. Paper on skin is mu ~0.45 and on
   // cloth ~0.35, so anything steeper than roughly 20 to 25 degrees sheds it.
-  // On a standing person very little qualifies: the shoulder shelf, the top of
-  // the head, and a forearm held level. A cheek or a chest is near vertical and
-  // in reality holds nothing at all.
+  //
+  // The silhouette answers that directly and without guesswork: if the point is
+  // on the person and just above it is open air, this is the upper boundary of
+  // the body and therefore an upward-facing surface. That is true across the
+  // top of hair, along a shoulder, and on the upper edge of a raised forearm,
+  // and false all the way down a face or a chest.
+  //
+  // Deriving the same thing from anatomy instead was wrong: a note gets one
+  // attempt, taken the moment it meets the body, and for a head that moment is
+  // at the top of the HAIR. A crown band computed from the nose and shoulder
+  // width sits below the hair, so every note landing on a head failed its one
+  // attempt and nothing ever settled there.
+  if (sampleMask(u, v - TOP_PROBE)) return;
+
+  // Body tracking cannot gate this, only describe it: which part of you the
+  // note came to rest on, and how well that part holds paper.
   const site = env.stickTest ? env.stickTest(u, v) : null;
-  let hold;
-  if (env.stickTest) {
-    if (!site) return; // steeper than the friction angle, it slides off
-    hold = site.hold;
-  } else {
-    // Without body tracking, the only surface we can identify is the upper
-    // boundary of the silhouette, which is the top of a head or a shoulder.
-    // Everything inside that outline is a front-facing surface like a chest or
-    // a face, far steeper than paper can hold on, so it takes nothing at all.
-    // Giving the interior even a small chance is what put notes on a face.
-    hold = sampleMask(u, v - 0.035) ? 0 : 1;
-  }
-  if (hold <= 0) return;
+  const hold = site ? site.hold : 0.8;
 
   // Slow notes settle; fast ones glance off. The floor here must stay below
   // `hold`, or a surface that holds nothing would still catch the occasional
@@ -338,7 +343,7 @@ function tryStick(sys, p, env, rng) {
   const chance = clamp((1.05 - speed / 4) * hold, 0, 0.94);
   if (chance <= 0 || rng() > chance) return;
 
-  const onTopSurface = hold > 0.5;
+  const onTopSurface = true; // gated on the silhouette's upper boundary above
   p.stuck = true;
   p.top = onTopSurface;
   p.site = site ? site.kind : 'silhouette';

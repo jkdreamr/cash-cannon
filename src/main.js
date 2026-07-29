@@ -39,6 +39,12 @@ const KNUCKLE_SPAN_M = 0.08;
 // legible size without moving where they leave the fingertip on screen.
 const MIN_MUZZLE_Z = 0.7;
 const MAX_MUZZLE_Z = 4;
+// Adult biacromial breadth. How wide your shoulders appear is the one reliable
+// measure of how far away YOU are, and it is available whenever the body is
+// tracked. Inferring your distance from your hand instead was wrong twice over:
+// a hand is nowhere near the depth of a torso, and during a money shower there
+// is often no hand in frame at all, so the estimate simply never updated.
+const SHOULDER_BREADTH_M = 0.40;
 
 // Add ?debug to the URL for a live readout of what the detector sees. It costs
 // nothing when off, and turns "it is not firing" into numbers.
@@ -337,6 +343,13 @@ function loop(ts) {
     if (!runSegmentation(ts)) runPose(ts);
   }
 
+  if (body.present) {
+    const zFromBody = depthFromSpan(cam, SHOULDER_BREADTH_M, body.basis.width * cam.width);
+    if (zFromBody && isFinite(zFromBody)) {
+      personZ = smooth(personZ, Math.min(Math.max(zFromBody, 0.4), 6), dt, 0.4);
+    }
+  }
+
   // Money already resting on someone follows the body it is lying on.
   if (body.present) {
     applyBodyBasis(system, body.basis);
@@ -366,7 +379,8 @@ function loop(ts) {
     seen.add(label);
     const { hand, tip3, dir, z, u, v, speed } = resolveHand(i, w, h, ts, dt);
 
-    personZ = personZ * 0.94 + (z + 0.3) * 0.06;
+    // Only fall back to the hand when the body itself is not being tracked.
+    if (!body.present) personZ = smooth(personZ, z + 0.3, dt, 0.5);
 
     if (speed > 0.5) knockStuck(system, { u, v, radius: 0.11, speed, cam });
 

@@ -281,6 +281,63 @@ describe('landing on the person', () => {
     expect(countStuck(top)).toBe(1);
   });
 
+  test('money lands in hair, which sits above where anatomy says the skull ends', () => {
+    // A note gets one attempt at resting, taken the moment it meets the body,
+    // and for a head that moment is at the top of the HAIR. Judging the surface
+    // from a crown band computed out of the nose and shoulder width put that
+    // band below the hair, so every note landing on a head failed its single
+    // attempt and nothing ever settled up there. The silhouette has to be what
+    // decides, since only it knows where the person actually ends.
+    const noseX = 0.48;
+    const noseY = 0.4;
+    const shoulderY = 0.66;
+    const lm = [];
+    for (let i = 0; i < 33; i++) lm.push({ x: 0.5, y: 0.5, visibility: 0 });
+    const put = (i, screenX, y) => { lm[i] = { x: 1 - screenX, y, visibility: 0.99 }; };
+    put(PL.R_SHOULDER, 0.33, shoulderY);
+    put(PL.L_SHOULDER, 0.63, shoulderY);
+    put(PL.NOSE, noseX, noseY);
+
+    const body = createBodyTracker();
+    body.update([lm]);
+    const bw = body.basis.width;
+    const skullTop = noseY - bw * 0.31;
+    // Thick hair, standing about half a head height above the skull. Measured
+    // against the old anatomy-derived crown this regime caught nothing at all.
+    const hairTop = skullTop - 0.08;
+
+    const env = {
+      cam, wind: true, time: 0, personZ: 1.5,
+      sampleMask: (u, v) =>
+        (Math.abs(u - noseX) < bw * 0.3 && v > hairTop && v < shoulderY)
+        || (u > 0.27 && u < 0.69 && v >= shoulderY),
+      stickTest: (u, v) => body.stickTest(u, v),
+    };
+
+    const sys = createSystem();
+    const rng = lcg(67);
+    let t = 0;
+    let rainClock = 0;
+    for (let f = 0; f < 60 * 25; f++) {
+      const dt = 1 / 60;
+      t += dt;
+      rainClock += dt;
+      env.time = t;
+      if (rainClock > 0.07) {
+        rainClock = 0;
+        spawnRain(sys, { cam, count: 2, focusZ: 1.5, rng });
+      }
+      step(sys, dt, env);
+    }
+
+    const resting = sys.particles.filter((p) => p.stuck);
+    const inHair = resting.filter((p) => p.v2 < skullTop);
+    expect(resting.length).toBeGreaterThan(2);
+    expect(inHair.length).toBeGreaterThan(0);
+    // And they are recognised as being on the head, so they lie flat on it.
+    for (const p of inHair) expect(p.site).toBe('head');
+  });
+
   test('money comes to rest on the head and shoulders, and never on the face', () => {
     // Drive the real body tracker from synthetic pose landmarks, so this
     // covers where pose.js actually allows money to settle.
@@ -328,7 +385,8 @@ describe('landing on the person', () => {
     const resting = sys.particles.filter((p) => p.stuck);
     expect(resting.length).toBeGreaterThan(0);
     for (const p of resting) {
-      expect(['shoulder', 'head']).toContain(p.site);
+      // The silhouette decides IF it can rest; pose only names WHERE.
+      expect(['shoulder', 'head', 'forearm', 'silhouette']).toContain(p.site);
       // Every resting note must still be somewhere the body can actually hold
       // it. Anything settling where the test says null is on a surface too
       // steep to hold paper, which is how notes ended up across a face.
