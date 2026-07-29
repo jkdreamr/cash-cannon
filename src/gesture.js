@@ -13,6 +13,16 @@ export const LM = {
 // Finger is "extended" when its PIP joint angle is >= this (near-straight).
 const EXTENDED_ANGLE = 135;
 
+// A finger gun asks two opposite questions of the same measurement, so one
+// threshold cannot serve both. The barrel only has to be roughly straight, and
+// people rarely hold it ruler-straight, so it is judged generously. The other
+// three only have to be not-straight, and people rarely fold them all the way
+// into the palm, so they are judged generously in the other direction. The gap
+// between the two is what makes the pose forgiving to hold while still
+// rejecting an open hand or a peace sign, where every finger is near-straight.
+const BARREL_STRAIGHT = 120;
+const FINGER_FOLDED = 150;
+
 // 3D angle in degrees at vertex `b`, between b->a and b->c. 180 = straight.
 // Works on landmarks carrying a z component; z defaults to 0 for pure-2D input.
 export function jointAngleDeg(lm, a, b, c) {
@@ -32,8 +42,8 @@ export function jointAngleDeg(lm, a, b, c) {
 // A finger counts as extended when the angle at its PIP joint (mcp->pip->tip)
 // is near-straight. This uses 3D joint geometry, so it stays correct when the
 // finger points toward or away from the camera (where 2D distance collapses).
-export function fingerExtended(lm, mcp, pip, tip) {
-  return jointAngleDeg(lm, mcp, pip, tip) >= EXTENDED_ANGLE;
+export function fingerExtended(lm, mcp, pip, tip, threshold = EXTENDED_ANGLE) {
+  return jointAngleDeg(lm, mcp, pip, tip) >= threshold;
 }
 
 // Vector between two landmarks, in 3D when the source has depth.
@@ -56,10 +66,18 @@ function angleDeg(a, b) {
 // shapeLm : 3D landmarks (MediaPipe worldLandmarks) used for the finger-shape
 //           test; defaults to screenLm so callers/tests can pass one array.
 export function classifyHand(screenLm, shapeLm = screenLm) {
-  const indexExtended = fingerExtended(shapeLm, LM.INDEX_MCP, LM.INDEX_PIP, LM.INDEX_TIP);
-  const middleExtended = fingerExtended(shapeLm, LM.MIDDLE_MCP, LM.MIDDLE_PIP, LM.MIDDLE_TIP);
-  const ringExtended = fingerExtended(shapeLm, LM.RING_MCP, LM.RING_PIP, LM.RING_TIP);
-  const pinkyExtended = fingerExtended(shapeLm, LM.PINKY_MCP, LM.PINKY_PIP, LM.PINKY_TIP);
+  const indexExtended = fingerExtended(
+    shapeLm, LM.INDEX_MCP, LM.INDEX_PIP, LM.INDEX_TIP, BARREL_STRAIGHT
+  );
+  const middleExtended = fingerExtended(
+    shapeLm, LM.MIDDLE_MCP, LM.MIDDLE_PIP, LM.MIDDLE_TIP, FINGER_FOLDED
+  );
+  const ringExtended = fingerExtended(
+    shapeLm, LM.RING_MCP, LM.RING_PIP, LM.RING_TIP, FINGER_FOLDED
+  );
+  const pinkyExtended = fingerExtended(
+    shapeLm, LM.PINKY_MCP, LM.PINKY_PIP, LM.PINKY_TIP, FINGER_FOLDED
+  );
 
   // The barrel: index out, the other three folded.
   const isGunShape = indexExtended && !middleExtended && !ringExtended && !pinkyExtended;
