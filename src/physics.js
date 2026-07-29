@@ -44,9 +44,22 @@ const FAR_CLIP = 12;    // m
 // Notes cannot pile into the same spot on a body, and only so many will perch
 // before the rest slide off. Both keep the money looking scattered rather than
 // stacked in a clump.
-// Tuned so notes may touch and overlap like real scattered money, but the
-// closest pair still sits about half a note apart rather than stacking.
-const STUCK_SEPARATION = 0.04; // normalised screen units
+//
+// The gap has to be measured in NOTES, not in screen fractions. A fixed
+// fraction of the frame is most of a note away when you stand back and a
+// quarter of one when you lean in, so close up the shoulder filled with a
+// solid bar of overlapping paper. Half a note apart reads as scattered money
+// at any distance.
+const STUCK_SEPARATION_NOTES = 0.5;
+const MIN_STUCK_SEPARATION = 0.02; // normalised screen units, for distant bodies
+
+// Half a note across, in normalised screen units, at the depth a body sits at.
+function stuckSeparation(cam, personZ) {
+  if (!cam || !personZ) return MIN_STUCK_SEPARATION;
+  const noteFrac = (cam.f * BILL_LONG) / personZ / cam.width;
+  return Math.max(MIN_STUCK_SEPARATION, noteFrac * STUCK_SEPARATION_NOTES);
+}
+
 // How far above a point to look for open air when deciding whether the surface
 // faces upward. Big enough to ride over a ragged mask edge, small enough that a
 // forehead never qualifies.
@@ -304,12 +317,13 @@ function tryStick(sys, p, env, rng) {
 
   // A note cannot land where one already lies, and a body only holds so many
   // before the rest slide off. Without this the money stacks into a clump.
+  const sep = stuckSeparation(cam, personZ);
   let nearby = 0;
   let resting = 0;
   for (const q of sys.particles) {
     if (!q.stuck) continue;
     resting += 1;
-    if (Math.hypot(q.u - u, q.v2 - v) < STUCK_SEPARATION) nearby += 1;
+    if (Math.hypot(q.u - u, q.v2 - v) < sep) nearby += 1;
   }
   if (nearby > 0 || resting >= MAX_STUCK) return;
 
@@ -330,6 +344,10 @@ function tryStick(sys, p, env, rng) {
   // width sits below the hair, so every note landing on a head failed its one
   // attempt and nothing ever settled there.
   if (sampleMask(u, v - TOP_PROBE)) return;
+
+  // The silhouette can include stray background, whose upper edge reads just
+  // like a shoulder. If a body is tracked, the point has to be somewhere on it.
+  if (env.withinBody && !env.withinBody(u, v)) return;
 
   // Body tracking cannot gate this, only describe it: which part of you the
   // note came to rest on, and how well that part holds paper.
@@ -354,18 +372,20 @@ function tryStick(sys, p, env, rng) {
   p.w = { x: 0, y: 0, z: 0 };
   p.bias = { x: 0, y: 0, z: 0 };
 
-  // Orientation follows the surface it came to rest on. A note draped over the
-  // top of a head or shoulder lies mostly flat, so from a camera in front of
-  // you it is strongly foreshortened. One caught against your chest faces the
-  // lens. Both get a random roll so no two sit at the same angle.
-  // A note lying on a shoulder or a crown has its face pointing almost
-  // straight up, so from a camera in front of you it is strongly foreshortened.
-  // Tilting it toward the lens is what made resting money look like a sticker
-  // hovering in front of the body rather than lying on it.
-  const jitterX = (rng() - 0.5) * 0.4;
+  // Orientation follows the surface it came to rest on: a note on a crown or a
+  // shoulder lies mostly flat and faces upward, one caught against a chest
+  // faces the lens.
+  //
+  // The slope a note comes to rest on is whatever the body offers under the
+  // friction angle, and it can fall away in any direction: a shoulder rounds
+  // forward on one side and back on the other, hair is uneven everywhere. A
+  // narrow, always-forward tilt made every resting note sit at the same angle,
+  // which is what read as a row of identical stickers.
+  const lean = 0.30 + rng() * 0.40;         // how far the surface falls toward the lens
+  const side = (rng() - 0.5) * 0.7;         // and how far it falls left or right
   p.n = onTopSurface
-    ? normalize({ x: jitterX, y: -0.86, z: -0.38 - rng() * 0.2 })
-    : normalize({ x: jitterX, y: -0.28 - rng() * 0.3, z: -0.9 });
+    ? normalize({ x: side, y: -1, z: -lean })
+    : normalize({ x: side * 0.5, y: -0.28 - rng() * 0.3, z: -0.9 });
   p.t = rotateAxis(perpendicular(p.n), p.n, rng() * Math.PI * 2);
 }
 
@@ -472,6 +492,30 @@ export function applyBodyBasis(sys, basis) {
   }
 }
 
+// A note bound to the body is carried by the shoulder frame, and that frame is
+// re-measured from landmarks that move and occasionally jump. A note can end up
+// somewhere the person no longer is, left hanging in the room. Anything that is
+// no longer on the body simply falls, as it would if you stepped out from under
+// it. Several consecutive misses are required, because the silhouette is
+// recomputed only a few times a second and its edges flicker.
+export function releaseStrays(sys, sampleMask, cam, rng = Math.random) {
+  if (!sampleMask) return 0;
+  let freed = 0;
+  for (const p of sys.particles) {
+    if (!p.stuck) continue;
+    if (sampleMask(p.u, p.v2)) {
+      p.offBody = 0;
+      continue;
+    }
+    p.offBody = (p.offBody || 0) + 1;
+    if (p.offBody >= 3) {
+      release(p, { x: 0, y: 0.25, z: 0 }, rng, cam);
+      freed += 1;
+    }
+  }
+  return freed;
+}
+
 // Move notes resting on the person as the person moves (normalised screen units).
 export function carryStuck(sys, du, dv) {
   for (const p of sys.particles) {
@@ -535,8 +579,13 @@ function release(p, vel, rng, cam) {
 }
 
 // Screen position of a note resting on the person, in world space.
-export function stuckWorld(p, cam) {
-  const z = p.restZ || 1.4;
+// Where a resting note is in space right now. Its depth is YOUR depth, taken
+// live rather than frozen at the moment it landed: you move, and a note lying
+// on you moves with you. Freezing it meant a note that landed while you were
+// far away stayed drawn at 40% of its proper size once you leaned in, which
+// read as a scrap of paper hanging in the background.
+export function stuckWorld(p, cam, personZ = null) {
+  const z = personZ || p.restZ || 1.4;
   return {
     x: ((p.u * cam.width - cam.cx) * z) / cam.f,
     y: ((p.v2 * cam.height - cam.cy) * z) / cam.f,

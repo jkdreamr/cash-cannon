@@ -121,6 +121,19 @@ export function createBodyTracker() {
       present = false;
     },
 
+    // Could this point plausibly be on this person at all? Segmentation masks
+    // pick up stray blobs of background, and the top edge of such a blob looks
+    // exactly like a shoulder to anything reading the silhouette alone. Without
+    // this, money comes to rest in mid-air out in the room. Measured in
+    // shoulder-widths from the shoulder line, and deliberately roomy: it has to
+    // cover a head, outstretched arms and a torso.
+    withinBody(u, v) {
+      if (!present || !basis) return true; // no body tracked, so no opinion
+      const dx = (u - basis.ox) / basis.width;
+      const dy = (v - basis.oy) / basis.width;
+      return dx > -1.6 && dx < 1.6 && dy > -1.5 && dy < 2.2;
+    },
+
     // Can a note rest at this point, and how well does it hold? Returns null
     // where the surface is steeper than the friction angle.
     stickTest(u, v) {

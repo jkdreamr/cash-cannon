@@ -76,7 +76,7 @@ export function createRenderer(canvas, options = {}) {
 
     const items = [];
     for (const p of particles) {
-      const pos = p.stuck ? stuckWorld(p, cam) : p.p;
+      const pos = p.stuck ? stuckWorld(p, cam, personZ) : p.p;
       items.push({ p, pos });
     }
     items.sort((a, b) => b.pos.z - a.pos.z);
@@ -136,24 +136,41 @@ const GHOSTS = [0.75, 0.5, 0.25];
 // which is also what lets you see any of its face when it is lying flat on top
 // of a head.
 const DRAPE_STRIPS = 6;
-// A note over a curve of radius R bends through arc L/R, dropping its ends by
-// R(1-cos(arc/2)). Over a head that is about 0.09 of the note's length, over a
-// shoulder slightly less. Anything near 0.17 reads as a croissant.
-const DRAPE_SAG = BILL_LONG * 0.09;
+
+// A note laid over a curve of radius R bends through an arc of L/R and its ends
+// drop by R(1 - cos(L/2R)). What R is depends entirely on which part of a body
+// caught it, so there is no single right sag: a crown is a tighter curve than a
+// shoulder, and a forearm is tighter than either.
+const DRAPE_RADIUS = {
+  head: 0.09,       // m, a skull
+  shoulder: 0.10,   // the trapezius shelf, a broad gentle curve
+  forearm: 0.045,
+  silhouette: 0.10, // no pose reading, so assume the gentle case
+};
+
+function drapeFor(p) {
+  const r = DRAPE_RADIUS[p.site] || DRAPE_RADIUS.silhouette;
+  // Past a quarter turn the paper has wrapped over the top of the curve and
+  // hangs down its far side, so the drop stops growing at the radius itself.
+  const half = Math.min(BILL_LONG / (2 * r), Math.PI / 2);
+  // Notes never land identically, so vary each one a little around that.
+  return r * (1 - Math.cos(half)) * (0.8 + (p.tone || 0.5) * 0.4);
+}
 
 // The contact shadow a resting note casts onto whatever it is lying on. Without
 // it the money reads as painted over the picture rather than sitting on it.
 function drawRestingShadow(ctx, cam, p, pos) {
   const half = BILL_LONG / 2;
+  const sag = drapeFor(p);
   const shortAxis = cross(p.n, p.t);
   const a = project(cam, {
     x: pos.x - p.t.x * half - (shortAxis.x * BILL_SHORT) / 2,
-    y: pos.y - p.t.y * half - (shortAxis.y * BILL_SHORT) / 2 + DRAPE_SAG,
+    y: pos.y - p.t.y * half - (shortAxis.y * BILL_SHORT) / 2 + sag,
     z: pos.z - p.t.z * half - (shortAxis.z * BILL_SHORT) / 2,
   });
   const b = project(cam, {
     x: pos.x + p.t.x * half - (shortAxis.x * BILL_SHORT) / 2,
-    y: pos.y + p.t.y * half - (shortAxis.y * BILL_SHORT) / 2 + DRAPE_SAG,
+    y: pos.y + p.t.y * half - (shortAxis.y * BILL_SHORT) / 2 + sag,
     z: pos.z + p.t.z * half - (shortAxis.z * BILL_SHORT) / 2,
   });
   const span = Math.hypot(b.x - a.x, b.y - a.y);
@@ -170,18 +187,18 @@ function drawRestingShadow(ctx, cam, p, pos) {
   ctx.restore();
 }
 
-function drawDraped(ctx, cam, p, pos, sheet) {
+function drawCurved(ctx, cam, p, pos, sheet, bend, strips, fade = 1) {
   const half = BILL_LONG / 2;
   const shortAxis = cross(p.n, p.t);
   const sx = (shortAxis.x * BILL_SHORT) / 2;
   const sy = (shortAxis.y * BILL_SHORT) / 2;
   const sz = (shortAxis.z * BILL_SHORT) / 2;
 
-  // Centre line of the note, bowed so the far ends hang lower.
+  // Centre line of the note, bowed along its length by `bend`.
   const spine = (a) => ({
-    x: pos.x + p.t.x * a * half,
-    y: pos.y + p.t.y * a * half + DRAPE_SAG * a * a,
-    z: pos.z + p.t.z * a * half,
+    x: pos.x + p.t.x * a * half + bend.x * a * a,
+    y: pos.y + p.t.y * a * half + bend.y * a * a,
+    z: pos.z + p.t.z * a * half + bend.z * a * a,
   });
 
   const toCam = normalize({ x: -pos.x, y: -pos.y, z: -pos.z });
@@ -192,9 +209,9 @@ function drawDraped(ctx, cam, p, pos, sheet) {
   const texW = tex.width || sheet.width;
   const texH = tex.height || sheet.height;
 
-  for (let i = 0; i < DRAPE_STRIPS; i++) {
-    const a0 = (i / DRAPE_STRIPS) * 2 - 1;
-    const a1 = ((i + 1) / DRAPE_STRIPS) * 2 - 1;
+  for (let i = 0; i < strips; i++) {
+    const a0 = (i / strips) * 2 - 1;
+    const a1 = ((i + 1) / strips) * 2 - 1;
     const m0 = spine(a0);
     const m1 = spine(a1);
 
@@ -219,16 +236,17 @@ function drawDraped(ctx, cam, p, pos, sheet) {
     }
 
     ctx.save();
+    ctx.globalAlpha = fade;
     ctx.transform(e1x / bw, e1y / bw, e2x / bh, e2y / bh, ox, oy);
     // The matching slice of the printed note. The long axis runs along the
     // texture's width, and seen from the back the slices run the other way, so
     // the artwork bends with the paper instead of sliding across it. Strips
     // overlap by a fraction of a pixel to avoid seams between them.
-    const sliceW = texW / DRAPE_STRIPS;
+    const sliceW = texW / strips;
     const srcX = back ? texW - (i + 1) * sliceW : i * sliceW;
     ctx.drawImage(tex, srcX, 0, sliceW, texH, 0, 0, bw + 0.6, bh);
     if (shade < 0.99) {
-      ctx.globalAlpha = (1 - shade) * 0.95;
+      ctx.globalAlpha = fade * (1 - shade) * 0.95;
       ctx.fillStyle = '#12180f';
       ctx.fillRect(0, 0, bw + 0.6, bh);
     }
@@ -236,10 +254,23 @@ function drawDraped(ctx, cam, p, pos, sheet) {
   }
 }
 
+// No banknote in the air is flat. A money gun's roller curls every note as it
+// shears it off the stack, and air pressure keeps it bowed the whole way down,
+// which is exactly why they flutter. Drawn as rigid rectangles they read as
+// playing cards. The bend is small and about the long axis, the way a note
+// curls in the hand.
+const AIR_CURL = BILL_LONG * 0.055;
+
+function curlFor(p) {
+  // Each note keeps its own curl, so a drift of them is not all one shape.
+  const k = AIR_CURL * (0.55 + (p.tone || 0.5) * 0.9);
+  return { x: -p.n.x * k, y: -p.n.y * k, z: -p.n.z * k };
+}
+
 function drawNote(ctx, cam, p, pos, sheet, dt) {
   if (p.stuck) {
     drawRestingShadow(ctx, cam, p, pos);
-    drawDraped(ctx, cam, p, pos, sheet);
+    drawCurved(ctx, cam, p, pos, sheet, { x: 0, y: drapeFor(p), z: 0 }, DRAPE_STRIPS);
     return;
   }
   if (!dt || !p.v) {
@@ -310,6 +341,14 @@ function drawBill(ctx, cam, p, pos, sheet, fade = 1) {
     return;
   }
   if (bw < FADE && bh < FADE) return;
+
+  // Big enough on screen for the curl to be visible, so draw the note as the
+  // bowed sheet it is. Small distant ones stay a single quad, where the bend
+  // would be under a pixel and the extra strips would only cost time.
+  if (bw > 55) {
+    drawCurved(ctx, cam, p, pos, sheet, curlFor(p), 4, alpha);
+    return;
+  }
 
   // A note seen from one side yields a left-handed screen basis, which makes
   // the canvas mirror everything drawn into it. Re-anchor to the opposite
