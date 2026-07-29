@@ -3,6 +3,7 @@ import { createHandFiringState, updateFiring } from './firing.js';
 import {
   createSystem, spawnBurst, spawnRain, step,
   carryStuck, shakeStuck, knockStuck, bindStuckToBody, applyBodyBasis, countStuck,
+  releaseStrays,
 } from './physics.js';
 import { createCamera, unproject, depthFromSpan } from './camera3d.js';
 import { normalize } from './vec3.js';
@@ -430,7 +431,11 @@ function loop(ts) {
     personZ: person.present ? personZ : null,
     sampleMask: person.present ? person.sampler : null,
     stickTest: body.present ? (u, v) => body.stickTest(u, v) : null,
+    withinBody: body.present ? (u, v) => body.withinBody(u, v) : null,
   });
+
+  // Anything the body has moved out from under simply falls.
+  if (person.present) releaseStrays(system, person.sampler, cam);
 
   // Anything that just came to rest is pinned to the body from now on.
   if (body.present) bindStuckToBody(system, body.basis);

@@ -77,9 +77,29 @@ describe('renderer', () => {
       shake: { x: 0, y: 0 },
     });
     expect(canvas.ctx.calls.clearRect).toBe(1);
-    // The camera feed plus one blit of printed artwork per note.
-    expect(canvas.ctx.calls.drawImage).toBe(3);
-    expect(canvas.ctx.calls.transform).toBe(2);
+    // The camera feed, then the printed artwork. A note large enough on screen
+    // is drawn as a bowed sheet in several strips rather than one flat quad,
+    // so this counts at least one blit per note beyond the feed.
+    expect(canvas.ctx.calls.drawImage).toBeGreaterThan(2);
+    expect(canvas.ctx.calls.transform).toBeGreaterThanOrEqual(2);
+    expect(canvas.ctx.images[0]).toBe(video);
+  });
+
+  test('a small distant note stays a single quad rather than paying for strips', () => {
+    const canvas = fakeCanvas();
+    const r = renderer(canvas);
+    r.draw({ video, cam, particles: [bill({ x: 0, y: 0, z: 9 })], shake: { x: 0, y: 0 } });
+    // Feed plus exactly one blit: at this size the bend is under a pixel.
+    expect(canvas.ctx.calls.drawImage).toBe(2);
+    expect(canvas.ctx.calls.transform).toBe(1);
+  });
+
+  test('a note in flight is drawn bowed, not as a flat card', () => {
+    const canvas = fakeCanvas();
+    const r = renderer(canvas);
+    r.draw({ video, cam, particles: [bill({ x: 0, y: 0, z: 1.2 })], shake: { x: 0, y: 0 } });
+    // Several strips, each its own slice of the printed note.
+    expect(canvas.ctx.calls.transform).toBeGreaterThan(2);
   });
 
   test('a note edge-on is drawn as a hairline rather than vanishing', () => {
@@ -212,6 +232,36 @@ describe('renderer', () => {
     // One transform per strip of the bend, rather than a single rigid quad.
     expect(canvas.ctx.calls.transform).toBeGreaterThan(3);
     expect(canvas.ctx.calls.stroke).toBeGreaterThan(0); // its contact shadow
+  });
+
+  test('a note folds further over a tight curve than over a broad one', () => {
+    // How deeply paper drapes is set by the radius it is lying over, and a body
+    // offers several: a forearm is a tighter curve than a skull, and a skull
+    // than the shelf of a shoulder. One sag for all of them made every resting
+    // note bend into the same arc.
+    const depth = (site) => {
+      const canvas = fakeCanvas();
+      const r = renderer(canvas);
+      r.draw({
+        video,
+        cam,
+        // Face-on and level, so the whole bend shows as vertical spread.
+        particles: [bill({ x: 0, y: 0, z: 0 }, {
+          stuck: true, u: 0.5, v2: 0.5, restZ: 1.2, site, tone: 0.5,
+          n: { x: 0, y: -1, z: 0 }, t: { x: 1, y: 0, z: 0 },
+        })],
+        shake: { x: 0, y: 0 },
+      });
+      // Each strip of the bend is placed by its own transform; how far they
+      // spread vertically is the depth of the fold on screen.
+      const ys = canvas.ctx.transforms.map((m) => m[5]);
+      return Math.max(...ys) - Math.min(...ys);
+    };
+
+    expect(depth('forearm')).toBeGreaterThan(depth('head'));
+    expect(depth('head')).toBeGreaterThan(depth('shoulder'));
+    // And an untracked surface still folds, rather than lying dead flat.
+    expect(depth('silhouette')).toBeGreaterThan(0);
   });
 
   test('a note resting on the person is placed from its screen anchor', () => {

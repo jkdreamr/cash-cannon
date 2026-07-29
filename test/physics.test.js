@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import {
   createSystem, spawnBurst, spawnRain, step,
-  carryStuck, shakeStuck, knockStuck, countStuck, stuckWorld, MAX_PARTICLES,
+  carryStuck, shakeStuck, knockStuck, countStuck, stuckWorld, releaseStrays,
+  MAX_PARTICLES, BILL_LONG,
 } from '../src/physics.js';
 import { createCamera, project } from '../src/camera3d.js';
 import { createBodyTracker, PL } from '../src/pose.js';
@@ -248,7 +249,7 @@ describe('landing on the person', () => {
     // the interior even a small chance is what put notes across a face.
     const faceTop = 0.1;
     const env = {
-      cam, wind: true, time: 0, personZ: 1.5,
+      cam, wind: true, time: 0, personZ: 1.5, rng: lcg(31),
       sampleMask: (u, v) => Math.abs(u - 0.45) < 0.26 && v > faceTop && v < 0.95,
       stickTest: null, // no pose available
     };
@@ -281,6 +282,67 @@ describe('landing on the person', () => {
     expect(countStuck(top)).toBe(1);
   });
 
+  test('a resting note is drawn at your depth now, not the depth it landed at', () => {
+    // You move, and a note lying on you moves with you. Freezing the depth it
+    // landed at left notes drawn at a fraction of their proper size, reading as
+    // scraps hanging in the background rather than money on a person.
+    const note = { stuck: true, u: 0.5, v2: 0.4, restZ: 1.5 };
+    const far = stuckWorld(note, cam, 1.5);
+    const near = stuckWorld(note, cam, 0.6);
+    expect(far.z).toBeCloseTo(1.5, 6);
+    expect(near.z).toBeCloseTo(0.6, 6);
+    // Same point on the body, so the same place on screen at either depth.
+    expect(project(cam, far).x).toBeCloseTo(project(cam, near).x, 6);
+    expect(project(cam, far).y).toBeCloseTo(project(cam, near).y, 6);
+    // But drawn larger when you are closer, as it must be.
+    expect(project(cam, near).scale).toBeGreaterThan(project(cam, far).scale * 2);
+    // With nothing passed it still falls back to where it landed.
+    expect(stuckWorld(note, cam).z).toBeCloseTo(1.5, 6);
+  });
+
+  test('money the body moves out from under falls instead of hanging in the room', () => {
+    const sys = createSystem();
+    spawnRain(sys, { cam, count: 1, minZ: 1.4, maxZ: 1.4, rng: () => 0.5 });
+    sys.particles[0].p = { x: 0, y: -0.32, z: 1.4 };
+    run(sys, 3, personEnv());
+    const bill = sys.particles.find((p) => p.stuck);
+    expect(bill).toBeTruthy();
+
+    // Still on the person: nothing happens, however many times we check.
+    for (let i = 0; i < 10; i++) releaseStrays(sys, personEnv().sampleMask, cam);
+    expect(bill.stuck).toBe(true);
+
+    // Now it is off the body. One stray reading must not drop it, since the
+    // silhouette flickers, but a persistent one must.
+    const offBody = () => false;
+    releaseStrays(sys, offBody, cam);
+    expect(bill.stuck).toBe(true);
+    releaseStrays(sys, offBody, cam);
+    releaseStrays(sys, offBody, cam);
+    expect(bill.stuck).toBe(false);
+  });
+
+  test('money will not come to rest on background the mask mistook for a person', () => {
+    const sys = createSystem();
+    const rng = lcg(71);
+    // Everything reads as body, but the tracker knows where the person is.
+    const env = {
+      cam, wind: true, time: 0, personZ: 1.5, rng: () => 0.01,
+      sampleMask: (u, v) => v > 0.2,
+      withinBody: (u) => u > 0.3 && u < 0.7, // the person occupies the middle
+    };
+    for (let i = 0; i < 40; i++) {
+      spawnRain(sys, { cam, count: 1, minZ: 1.5, maxZ: 1.5, rng });
+      const n = sys.particles[sys.particles.length - 1];
+      // Above the mask's top edge, so each falls in through it.
+      n.p = { x: ((0.05 + i * 0.022) * cam.width - cam.cx) * 1.5 / cam.f, y: -0.42, z: 1.5 };
+    }
+    for (let f = 0; f < 240; f++) step(sys, 1 / 60, { ...env, time: f / 60 });
+    const resting = sys.particles.filter((p) => p.stuck);
+    expect(resting.length).toBeGreaterThan(0);
+    for (const p of resting) expect(env.withinBody(p.u)).toBe(true);
+  });
+
   test('money lands in hair, which sits above where anatomy says the skull ends', () => {
     // A note gets one attempt at resting, taken the moment it meets the body,
     // and for a head that moment is at the top of the HAIR. Judging the surface
@@ -307,7 +369,7 @@ describe('landing on the person', () => {
     const hairTop = skullTop - 0.08;
 
     const env = {
-      cam, wind: true, time: 0, personZ: 1.5,
+      cam, wind: true, time: 0, personZ: 1.5, rng: lcg(33),
       sampleMask: (u, v) =>
         (Math.abs(u - noseX) < bw * 0.3 && v > hairTop && v < shoulderY)
         || (u > 0.27 && u < 0.69 && v >= shoulderY),
@@ -338,6 +400,56 @@ describe('landing on the person', () => {
     for (const p of inHair) expect(p.site).toBe('head');
   });
 
+  test('resting notes stay a half note apart however close you stand', () => {
+    // How wide a note is on screen depends entirely on how close the body is:
+    // it covers 5% of the frame at 2.5 m and 19% at 0.7 m. Spacing the resting
+    // notes by a fixed fraction of the frame therefore held them apart at arm's
+    // length and let them stack into a solid bar of paper up close.
+    const restingSpread = (personZ) => {
+      const sys = createSystem();
+      const rng = lcg(23);
+      const env = {
+        cam, wind: true, time: 0, personZ,
+        // Whether a note settles is a dice roll, so the simulation needs its
+        // own deterministic stream too. Leaving this out falls back to
+        // Math.random and makes the whole test flaky.
+        rng: lcg(24),
+        // A shoulder line straight across the frame, so every landing spot is
+        // equally good and the spacing rule is the only thing separating them.
+        sampleMask: (u, v) => v > 0.55,
+      };
+      let t = 0;
+      for (let f = 0; f < 60 * 20; f++) {
+        t += 1 / 60;
+        env.time = t;
+        if (f % 5 === 0) spawnRain(sys, { cam, count: 2, focusZ: personZ, rng });
+        step(sys, 1 / 60, env);
+      }
+      const resting = sys.particles.filter((p) => p.stuck);
+      let closest = Infinity;
+      for (let i = 0; i < resting.length; i++) {
+        for (let j = i + 1; j < resting.length; j++) {
+          const d = Math.hypot(resting[i].u - resting[j].u, resting[i].v2 - resting[j].v2);
+          if (d < closest) closest = d;
+        }
+      }
+      // A note's long edge, as a fraction of the frame width, at this depth.
+      const noteFrac = (cam.f * BILL_LONG) / personZ / cam.width;
+      return { count: resting.length, closest, gapInNotes: closest / noteFrac };
+    };
+
+    const near = restingSpread(0.7);
+    const far = restingSpread(2.2);
+    // Fewer fit up close, because a note covers a fifth of the frame there.
+    expect(near.count).toBeGreaterThan(2);
+    expect(far.count).toBeGreaterThan(3);
+    // Measured in notes, the scatter is the same whichever distance you stand
+    // at. Under a fixed screen-space gap the near case fell to about a fifth of
+    // a note, which is what drew the bar of overlapping money on the shoulder.
+    expect(near.gapInNotes).toBeGreaterThan(0.45);
+    expect(far.gapInNotes).toBeGreaterThan(0.45);
+  });
+
   test('money comes to rest on the head and shoulders, and never on the face', () => {
     // Drive the real body tracker from synthetic pose landmarks, so this
     // covers where pose.js actually allows money to settle.
@@ -358,7 +470,7 @@ describe('landing on the person', () => {
     const bw = body.basis.width;
     const headTop = noseY - bw * 0.31;
     const env = {
-      cam, wind: true, time: 0, personZ: 1.5,
+      cam, wind: true, time: 0, personZ: 1.5, rng: lcg(35),
       // Head and torso silhouette, so nothing settles beside the body.
       sampleMask: (u, v) =>
         (Math.abs(u - noseX) < bw * 0.3 && v > headTop - bw * 0.05 && v < shoulderY)
