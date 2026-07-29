@@ -62,6 +62,26 @@ describe('jointAngleDeg', () => {
   });
 });
 
+describe('robustness at the library boundary', () => {
+  test('a short or missing landmark set is handled, not thrown from the loop', () => {
+    // This runs inside requestAnimationFrame, so anything that throws here
+    // stops the whole scene for the session.
+    for (const bad of [null, undefined, [], gunHand().slice(0, 10)]) {
+      const h = classifyHand(bad);
+      expect(h.isGunShape).toBe(false);
+      expect(Number.isFinite(h.thumbGap)).toBe(true);
+    }
+  });
+
+  test('degenerate landmarks give finite numbers rather than NaN', () => {
+    const same = new Array(21).fill(0).map(() => ({ x: 0, y: 0, z: 0 }));
+    const h = classifyHand(same);
+    expect(Number.isFinite(h.thumbGap)).toBe(true);
+    expect(Number.isFinite(h.aimMag)).toBe(true);
+    expect(h.isGunShape).toBe(false);
+  });
+});
+
 describe('classifyHand', () => {
   test('detects a gun (index out, other fingers folded)', () => {
     const h = classifyHand(gunHand());
