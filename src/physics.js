@@ -364,7 +364,7 @@ function tryStick(sys, p, env, rng) {
   // hovering in front of the body rather than lying on it.
   const jitterX = (rng() - 0.5) * 0.4;
   p.n = onTopSurface
-    ? normalize({ x: jitterX, y: -0.93, z: -0.22 - rng() * 0.18 })
+    ? normalize({ x: jitterX, y: -0.86, z: -0.38 - rng() * 0.2 })
     : normalize({ x: jitterX, y: -0.28 - rng() * 0.3, z: -0.9 });
   p.t = rotateAxis(perpendicular(p.n), p.n, rng() * Math.PI * 2);
 }

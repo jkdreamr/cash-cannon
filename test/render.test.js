@@ -8,11 +8,13 @@ function fakeCtx() {
   const calls = { clearRect: 0, fill: 0, drawImage: 0, stroke: 0, fillText: 0, transform: 0 };
   const transforms = [];
   const alphas = [];
+  const images = [];
   const grad = { addColorStop() {} };
   return {
     calls,
     transforms,
     alphas,
+    images,
     setTransform() {},
     transform(a, b, c, d, e, f) { calls.transform++; transforms.push([a, b, c, d, e, f]); },
     clearRect() { calls.clearRect++; },
@@ -21,7 +23,7 @@ function fakeCtx() {
     fillRect() {}, strokeRect() {},
     stroke() { calls.stroke++; },
     fill() { calls.fill++; },
-    drawImage() { calls.drawImage++; },
+    drawImage(src) { calls.drawImage++; images.push(src); },
     fillText() { calls.fillText++; },
     createLinearGradient() { return grad; },
     createRadialGradient() { return grad; },
@@ -172,6 +174,44 @@ describe('renderer', () => {
         expect(det).toBeGreaterThan(0);
       }
     }
+  });
+
+  test('money resting on you is never hidden behind you', () => {
+    // A resting note stores the body depth it landed at, and that estimate
+    // drifts as you move. Sorting purely on depth therefore sank resting notes
+    // into the body. Money lying on your surface faces the lens by definition.
+    const canvas = fakeCanvas();
+    const r = renderer(canvas);
+    const stencil = { width: 16, height: 16 };
+    r.draw({
+      video,
+      cam,
+      // Landed when the body read further away than it does now.
+      particles: [bill({ x: 0, y: 0, z: 0 }, { stuck: true, u: 0.5, v2: 0.4, restZ: 2.4 })],
+      personStencil: stencil,
+      personZ: 1.2,
+      shake: { x: 0, y: 0 },
+    });
+    const imgs = canvas.ctx.images;
+    // The cut-out of the person is the only drawn image that is a canvas.
+    const cutIndex = imgs.findIndex((i) => i && typeof i.getContext === 'function');
+    const noteIndex = imgs.findIndex((i) => i === fakeArt.front[0]);
+    expect(cutIndex).toBeGreaterThanOrEqual(0);
+    expect(noteIndex).toBeGreaterThan(cutIndex); // drawn over the person
+  });
+
+  test('a resting note is draped over the surface, not drawn as one flat plate', () => {
+    const canvas = fakeCanvas();
+    const r = renderer(canvas);
+    r.draw({
+      video,
+      cam,
+      particles: [bill({ x: 0, y: 0, z: 0 }, { stuck: true, u: 0.5, v2: 0.45, restZ: 1.2 })],
+      shake: { x: 0, y: 0 },
+    });
+    // One transform per strip of the bend, rather than a single rigid quad.
+    expect(canvas.ctx.calls.transform).toBeGreaterThan(3);
+    expect(canvas.ctx.calls.stroke).toBeGreaterThan(0); // its contact shadow
   });
 
   test('a note resting on the person is placed from its screen anchor', () => {

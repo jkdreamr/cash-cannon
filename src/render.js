@@ -87,16 +87,19 @@ export function createRenderer(canvas, options = {}) {
     ctx.translate(shake.x, shake.y);
 
     if (canOcclude) {
-      let i = 0;
-      for (; i < items.length && items[i].pos.z > personZ; i++) {
-        drawNote(ctx, cam, items[i].p, items[i].pos, sheet, dt);
+      // Money resting ON someone lies on the surface facing the lens, so it is
+      // never hidden by them however its stored depth compares to the body's
+      // current one. Sorting it purely by depth made notes sink into the body
+      // as that estimate drifted.
+      for (const it of items) {
+        if (!it.p.stuck && it.pos.z > personZ) drawNote(ctx, cam, it.p, it.pos, sheet, dt);
       }
       ctx.restore();
       drawPerson(video, personStencil, w, h);
       ctx.save();
       ctx.translate(shake.x, shake.y);
-      for (; i < items.length; i++) {
-        drawNote(ctx, cam, items[i].p, items[i].pos, sheet, dt);
+      for (const it of items) {
+        if (it.p.stuck || it.pos.z <= personZ) drawNote(ctx, cam, it.p, it.pos, sheet, dt);
       }
     } else {
       for (const it of items) drawNote(ctx, cam, it.p, it.pos, sheet, dt);
@@ -126,8 +129,120 @@ function hairline(ctx, ax, ay, bx, by, thickness, alpha) {
 // are the intermediate positions the note actually occupied during the frame.
 const GHOSTS = [0.75, 0.5, 0.25];
 
+// Paper laid over a head or a shoulder is not a rigid plate: it takes the shape
+// of what it is lying on, with the ends drooping away over the curve. Drawing a
+// resting note as one flat quad is what made it read as a blade stuck through
+// somebody. The note is split along its length and each piece follows the sag,
+// which is also what lets you see any of its face when it is lying flat on top
+// of a head.
+const DRAPE_STRIPS = 6;
+// A note over a curve of radius R bends through arc L/R, dropping its ends by
+// R(1-cos(arc/2)). Over a head that is about 0.09 of the note's length, over a
+// shoulder slightly less. Anything near 0.17 reads as a croissant.
+const DRAPE_SAG = BILL_LONG * 0.09;
+
+// The contact shadow a resting note casts onto whatever it is lying on. Without
+// it the money reads as painted over the picture rather than sitting on it.
+function drawRestingShadow(ctx, cam, p, pos) {
+  const half = BILL_LONG / 2;
+  const shortAxis = cross(p.n, p.t);
+  const a = project(cam, {
+    x: pos.x - p.t.x * half - (shortAxis.x * BILL_SHORT) / 2,
+    y: pos.y - p.t.y * half - (shortAxis.y * BILL_SHORT) / 2 + DRAPE_SAG,
+    z: pos.z - p.t.z * half - (shortAxis.z * BILL_SHORT) / 2,
+  });
+  const b = project(cam, {
+    x: pos.x + p.t.x * half - (shortAxis.x * BILL_SHORT) / 2,
+    y: pos.y + p.t.y * half - (shortAxis.y * BILL_SHORT) / 2 + DRAPE_SAG,
+    z: pos.z + p.t.z * half - (shortAxis.z * BILL_SHORT) / 2,
+  });
+  const span = Math.hypot(b.x - a.x, b.y - a.y);
+  if (!(span > 2) || span > 4000) return;
+  ctx.save();
+  ctx.globalAlpha = 0.26;
+  ctx.strokeStyle = '#0d1510';
+  ctx.lineWidth = Math.max(2, span * 0.075);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y + ctx.lineWidth * 0.35);
+  ctx.lineTo(b.x, b.y + ctx.lineWidth * 0.35);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawDraped(ctx, cam, p, pos, sheet) {
+  const half = BILL_LONG / 2;
+  const shortAxis = cross(p.n, p.t);
+  const sx = (shortAxis.x * BILL_SHORT) / 2;
+  const sy = (shortAxis.y * BILL_SHORT) / 2;
+  const sz = (shortAxis.z * BILL_SHORT) / 2;
+
+  // Centre line of the note, bowed so the far ends hang lower.
+  const spine = (a) => ({
+    x: pos.x + p.t.x * a * half,
+    y: pos.y + p.t.y * a * half + DRAPE_SAG * a * a,
+    z: pos.z + p.t.z * a * half,
+  });
+
+  const toCam = normalize({ x: -pos.x, y: -pos.y, z: -pos.z });
+  const back = dot(p.n, toCam) < 0;
+  const faces = back ? sheet.back : sheet.front;
+  const tex = faces[(p.variant || 0) % faces.length];
+  const shade = 0.58 + 0.42 * Math.min(1, Math.abs(dot(p.n, LIGHT)));
+  const texW = tex.width || sheet.width;
+  const texH = tex.height || sheet.height;
+
+  for (let i = 0; i < DRAPE_STRIPS; i++) {
+    const a0 = (i / DRAPE_STRIPS) * 2 - 1;
+    const a1 = ((i + 1) / DRAPE_STRIPS) * 2 - 1;
+    const m0 = spine(a0);
+    const m1 = spine(a1);
+
+    const q0 = project(cam, { x: m0.x - sx, y: m0.y - sy, z: m0.z - sz });
+    const q1 = project(cam, { x: m1.x - sx, y: m1.y - sy, z: m1.z - sz });
+    const q2 = project(cam, { x: m0.x + sx, y: m0.y + sy, z: m0.z + sz });
+
+    let ox = q0.x;
+    let oy = q0.y;
+    let e1x = q1.x - q0.x;
+    let e1y = q1.y - q0.y;
+    let e2x = q2.x - q0.x;
+    let e2y = q2.y - q0.y;
+    const bw = Math.hypot(e1x, e1y);
+    const bh = Math.hypot(e2x, e2y);
+    if (bw < 0.4 || bh < 0.4 || bw > 4000 || bh > 4000) continue;
+    if (e1x * e2y - e1y * e2x < 0) {
+      ox = q2.x;
+      oy = q2.y;
+      e2x = -e2x;
+      e2y = -e2y;
+    }
+
+    ctx.save();
+    ctx.transform(e1x / bw, e1y / bw, e2x / bh, e2y / bh, ox, oy);
+    // The matching slice of the printed note. The long axis runs along the
+    // texture's width, and seen from the back the slices run the other way, so
+    // the artwork bends with the paper instead of sliding across it. Strips
+    // overlap by a fraction of a pixel to avoid seams between them.
+    const sliceW = texW / DRAPE_STRIPS;
+    const srcX = back ? texW - (i + 1) * sliceW : i * sliceW;
+    ctx.drawImage(tex, srcX, 0, sliceW, texH, 0, 0, bw + 0.6, bh);
+    if (shade < 0.99) {
+      ctx.globalAlpha = (1 - shade) * 0.95;
+      ctx.fillStyle = '#12180f';
+      ctx.fillRect(0, 0, bw + 0.6, bh);
+    }
+    ctx.restore();
+  }
+}
+
 function drawNote(ctx, cam, p, pos, sheet, dt) {
-  if (p.stuck || !dt || !p.v) {
+  if (p.stuck) {
+    drawRestingShadow(ctx, cam, p, pos);
+    drawDraped(ctx, cam, p, pos, sheet);
+    return;
+  }
+  if (!dt || !p.v) {
     drawBill(ctx, cam, p, pos, sheet);
     return;
   }
@@ -219,17 +334,8 @@ function drawBill(ctx, cam, p, pos, sheet, fade = 1) {
   // Lambert term. Notes catch the light as they tumble.
   const shade = 0.58 + 0.42 * Math.min(1, Math.abs(dot(p.n, LIGHT)));
 
-  // A note resting on someone casts a shadow onto them. Without this contact
-  // cue the money reads as pasted over the picture.
-  if (p.stuck) {
-    const off = Math.max(1.5, bw * 0.03);
-    ctx.save();
-    ctx.globalAlpha = alpha * 0.3;
-    ctx.transform(ux, uy, vx, vy, ox + off * 0.45, oy + off);
-    ctx.fillStyle = '#101a12';
-    ctx.fillRect(0, 0, bw, bh);
-    ctx.restore();
-  }
+  // Resting notes never reach here: they are drawn draped over whatever they
+  // are lying on, with their own contact shadow.
 
   ctx.save();
   ctx.globalAlpha = alpha;
