@@ -32,6 +32,24 @@ export function updateFiring(state, hand, nowMs, cfg = {}) {
     if (state.lostFrames > c.graceFrames) {
       state.firing = false;
       state.thumb = 'down';
+      return { didFire: false, firing: false, thumbUp: false };
+    }
+
+    // Inside the grace window the pose is presumed still held. Whether a
+    // half-folded finger reads as extended sits on a hard angle threshold, so
+    // with real landmarks it can flicker for a frame at a time. Stopping dead
+    // on a single frame of that chops the stream, or prevents it starting at
+    // all; a gun already firing keeps firing until the pose is really gone.
+    if (state.firing && state.thumb === 'up' && hand) {
+      let didFire = false;
+      if (nowMs - state.lastFireMs >= c.fireIntervalMs) {
+        didFire = true;
+        state.lastFireMs = nowMs;
+      }
+      return {
+        didFire, firing: true, thumbUp: true,
+        tip: hand.tip, aim: hand.aim, aimMag: hand.aimMag,
+      };
     }
     return { didFire: false, firing: state.firing, thumbUp: state.thumb === 'up' };
   }

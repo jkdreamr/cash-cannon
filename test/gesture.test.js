@@ -80,6 +80,43 @@ describe('classifyHand', () => {
     expect(Math.abs(h.aim.x)).toBeLessThan(0.1);
   });
 
+  test('the pose is forgiving to hold, without accepting the wrong hand', () => {
+    // Two opposite questions of one measurement, so two thresholds: the barrel
+    // may be bent up to 60 degrees and still count, while the other fingers
+    // need only be bent 30 degrees to count as folded. Nobody holds a finger
+    // gun to ruler tolerances, and a single threshold made it fussy.
+    const build = ({ barrelBend = 0, othersStraight = false, middleStraight = false }) => {
+      const lm = new Array(21);
+      const P = (x, y, z = 0) => ({ x, y, z });
+      lm[0] = P(0.01, -0.09); lm[1] = P(-0.018, -0.07); lm[2] = P(-0.035, -0.045);
+      lm[3] = P(-0.058, -0.018); lm[4] = P(-0.075, 0.01);
+      const a = (barrelBend * Math.PI) / 180;
+      lm[5] = P(0, 0); lm[6] = P(0.002, 0.035);
+      lm[7] = P(0.002 + 0.023 * Math.sin(a), 0.035 + 0.023 * Math.cos(a));
+      lm[8] = P(0.002 + 0.043 * Math.sin(a), 0.035 + 0.043 * Math.cos(a));
+      const put = (base, x, i, straight) => {
+        lm[base] = P(x, -0.002 - i * 0.004);
+        lm[base + 1] = P(x + 0.002, 0.03, straight ? 0 : 0.006);
+        lm[base + 2] = straight ? P(x + 0.004, 0.055) : P(x - 0.003, 0.02, 0.026);
+        lm[base + 3] = straight ? P(x + 0.005, 0.074) : P(x - 0.008, 0.002, 0.03);
+      };
+      put(9, 0.027, 0, othersStraight || middleStraight);
+      put(13, 0.054, 1, othersStraight);
+      put(17, 0.08, 2, othersStraight);
+      return lm;
+    };
+
+    // A lazily held gun still counts.
+    expect(classifyHand(build({ barrelBend: 0 })).isGunShape).toBe(true);
+    expect(classifyHand(build({ barrelBend: 40 })).isGunShape).toBe(true);
+    expect(classifyHand(build({ barrelBend: 60 })).isGunShape).toBe(true);
+    // Curled right over is not a barrel at all.
+    expect(classifyHand(build({ barrelBend: 80 })).isGunShape).toBe(false);
+    // And hands that are not finger guns are still refused.
+    expect(classifyHand(build({ othersStraight: true })).isGunShape).toBe(false);
+    expect(classifyHand(build({ middleStraight: true })).isGunShape).toBe(false);
+  });
+
   test('reads the thumb as the hammer: up is clear of the barrel, down is not', () => {
     const up = classifyHand(gunHand({ thumb: 'up' }));
     const down = classifyHand(gunHand({ thumb: 'down' }));

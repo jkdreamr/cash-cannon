@@ -110,6 +110,40 @@ describe('updateFiring (continuous)', () => {
     expect(updateFiring(s, THUMB_DOWN, (now += 16)).didFire).toBe(false);
   });
 
+  test('one frame of misread pose does not chop the stream', () => {
+    // Whether a half-folded finger counts as extended sits on an angle
+    // threshold, so with real landmarks it can flicker for a frame. A gun
+    // already firing must ride straight through that.
+    const s = createHandFiringState();
+    let now = 0;
+    expect(updateFiring(s, THUMB_UP, (now += 16)).didFire).toBe(true);
+
+    let fired = 0;
+    for (let i = 0; i < 12; i++) {
+      // Every third frame the shape is misread.
+      const hand = i % 3 === 2 ? NOGUN : THUMB_UP;
+      if (updateFiring(s, hand, (now += 16)).didFire) fired++;
+    }
+    // 192 ms at a 50 ms cadence is three or four shots; a chopped stream would
+    // give noticeably fewer.
+    expect(fired).toBeGreaterThanOrEqual(3);
+    expect(s.firing).toBe(true);
+  });
+
+  test('but genuinely dropping the pose still stops it', () => {
+    const s = createHandFiringState();
+    let now = 0;
+    updateFiring(s, THUMB_UP, (now += 16));
+    let fired = 0;
+    for (let i = 0; i < 20; i++) {
+      if (updateFiring(s, NOGUN, (now += 16)).didFire) fired++;
+    }
+    // A couple may escape inside the grace window, then it must go quiet.
+    expect(s.firing).toBe(false);
+    expect(fired).toBeLessThanOrEqual(2);
+    expect(updateFiring(s, NOGUN, (now += 16)).didFire).toBe(false);
+  });
+
   test('does not fire without a gun', () => {
     const s = createHandFiringState();
     let now = 0;

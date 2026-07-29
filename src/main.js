@@ -2,7 +2,7 @@ import { classifyHand, LM } from './gesture.js';
 import { createHandFiringState, updateFiring } from './firing.js';
 import {
   createSystem, spawnBurst, spawnRain, step,
-  carryStuck, shakeStuck, knockStuck, bindStuckToBody, applyBodyBasis,
+  carryStuck, shakeStuck, knockStuck, bindStuckToBody, applyBodyBasis, countStuck,
 } from './physics.js';
 import { createCamera, unproject, depthFromSpan } from './camera3d.js';
 import { normalize } from './vec3.js';
@@ -39,6 +39,11 @@ const KNUCKLE_SPAN_M = 0.08;
 // legible size without moving where they leave the fingertip on screen.
 const MIN_MUZZLE_Z = 0.7;
 const MAX_MUZZLE_Z = 4;
+
+// Add ?debug to the URL for a live readout of what the detector sees. It costs
+// nothing when off, and turns "it is not firing" into numbers.
+const DEBUG = new URLSearchParams(location.search).has('debug');
+const diag = [];
 
 const el = (id) => document.getElementById(id);
 const canvas = el('feed');
@@ -355,6 +360,7 @@ function loop(ts) {
   }
 
   const seen = new Set();
+  diag.length = 0;
   for (let i = 0; i < hands.length; i++) {
     const label = labels[i];
     seen.add(label);
@@ -377,6 +383,20 @@ function loop(ts) {
         lastChaChingMs = ts;
       }
       shakeMag = 2.5;
+    }
+
+    if (DEBUG) {
+      diag.push(
+        `${label}  gun:${hand.isGunShape ? 'yes' : 'no '}`
+        + `  fingers i${hand.fingers.indexExtended ? 1 : 0}`
+        + `m${hand.fingers.middleExtended ? 1 : 0}`
+        + `r${hand.fingers.ringExtended ? 1 : 0}`
+        + `p${hand.fingers.pinkyExtended ? 1 : 0}`
+        + `  thumbGap:${hand.thumbGap.toFixed(2)} (need 0.70)`
+        + `  hammer:${r.thumbUp ? 'UP' : 'down'}`
+        + `  firing:${r.firing ? 'yes' : 'no'}`
+        + `  hand:${z.toFixed(2)}m`
+      );
     }
   }
 
@@ -415,7 +435,28 @@ function loop(ts) {
     shake,
   });
 
+  if (DEBUG) drawDiagnostics(w, h);
+
   requestAnimationFrame(loop);
+}
+
+function drawDiagnostics(w, h) {
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const lines = [
+    `hands:${hands.length}  body:${body.present ? 'tracked' : 'none'}`
+    + `  silhouette:${person.present ? 'yes' : 'no'}  resting:${countStuck(system)}`
+    + `  notes:${system.particles.length}`,
+    ...diag,
+  ];
+  ctx.font = `${Math.round(h * 0.018)}px ui-monospace, Menlo, monospace`;
+  ctx.textBaseline = 'top';
+  const pad = Math.round(h * 0.012);
+  const lh = Math.round(h * 0.026);
+  ctx.fillStyle = 'rgba(4, 14, 9, 0.72)';
+  ctx.fillRect(pad, pad, w - pad * 2, lh * lines.length + pad);
+  ctx.fillStyle = '#8ff2b5';
+  lines.forEach((line, i) => ctx.fillText(line, pad * 2, pad * 1.5 + i * lh));
 }
 
 el('startBtn').addEventListener('click', start);
