@@ -5,21 +5,29 @@ import { createCamera } from '../src/camera3d.js';
 const cam = createCamera(1280, 720);
 
 function fakeCtx() {
-  const calls = { clearRect: 0, fill: 0, drawImage: 0, stroke: 0, fillText: 0, transform: 0 };
+  const calls = { clearRect: 0, fill: 0, drawImage: 0, stroke: 0, fillText: 0, transform: 0, clip: 0 };
   const transforms = [];
   const alphas = [];
   const images = [];
+  const path = [];
+  const clips = [];
   const grad = { addColorStop() {} };
   return {
     calls,
     transforms,
     alphas,
     images,
+    clips,
     setTransform() {},
     transform(a, b, c, d, e, f) { calls.transform++; transforms.push([a, b, c, d, e, f]); },
     clearRect() { calls.clearRect++; },
     save() {}, restore() {}, translate() {}, scale() {}, rotate() {},
-    beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, arc() {}, arcTo() {}, ellipse() {},
+    beginPath() { path.length = 0; },
+    closePath() {},
+    moveTo(x, y) { path.push([x, y]); },
+    lineTo(x, y) { path.push([x, y]); },
+    clip() { calls.clip++; clips.push(path.slice()); },
+    arc() {}, arcTo() {}, ellipse() {},
     fillRect() {}, strokeRect() {},
     stroke() { calls.stroke++; },
     fill() { calls.fill++; },
@@ -232,6 +240,110 @@ describe('renderer', () => {
     // One transform per strip of the bend, rather than a single rigid quad.
     expect(canvas.ctx.calls.transform).toBeGreaterThan(3);
     expect(canvas.ctx.calls.stroke).toBeGreaterThan(0); // its contact shadow
+  });
+
+  test('the print is laid on the paper the right way up, not turned end for end', () => {
+    // A determinant test cannot see this. Turning a note through 180 degrees
+    // flips both texture axes, so the handedness is unchanged and the artwork
+    // still comes out upside down. What pins it is where a known corner of the
+    // print lands: for a note square-on with its length along screen x, the
+    // top-left of the print has to be up and to the left of the note's centre.
+    const canvas = fakeCanvas();
+    const r = renderer(canvas);
+    r.draw({
+      video,
+      cam,
+      particles: [bill({ x: 0, y: 0, z: 0 }, {
+        stuck: true, u: 0.5, v2: 0.5, restZ: 1.0, site: 'shoulder', tone: 0.5,
+        n: { x: 0, y: 0, z: -1 }, t: { x: 1, y: 0, z: 0 },
+      })],
+      shake: { x: 0, y: 0 },
+    });
+    // The first triangle starts at texture (0,0), so the transform's offset is
+    // exactly where the print's top-left corner was placed on screen.
+    const [, , , , e, f] = canvas.ctx.transforms[0];
+    expect(e).toBeLessThan(cam.cx); // left of centre
+    expect(f).toBeLessThan(cam.cy); // above centre
+  });
+
+  test('a fold is drawn as joined-up triangles, so it cannot tear open', () => {
+    // Each strip used to be one parallelogram, whose fourth corner is implied
+    // rather than projected. Under perspective that corner does not agree with
+    // the neighbouring strip's, so the note came apart into slits with the body
+    // showing through. Triangles that share their corners cannot do that.
+    const canvas = fakeCanvas();
+    const r = renderer(canvas);
+    r.draw({
+      video,
+      cam,
+      // Square-on and close, so the fold is wide on screen and every strip
+      // shows the same face.
+      particles: [bill({ x: 0, y: 0, z: 0 }, {
+        stuck: true, u: 0.5, v2: 0.5, restZ: 0.6, site: 'head', tone: 0.5,
+        n: { x: 0, y: 0, z: -1 }, t: { x: 1, y: 0, z: 0 },
+      })],
+      shake: { x: 0, y: 0 },
+    });
+    // Two clipped triangles per strip of the fold.
+    expect(canvas.ctx.calls.clip).toBe(canvas.ctx.calls.transform);
+    const tri = canvas.ctx.transforms;
+    expect(tri.length).toBeGreaterThanOrEqual(8);
+    expect(tri.length % 2).toBe(0);
+    // Every strip is showing the same side of the paper here, so the texture
+    // runs straight across and the slice boundaries are known.
+    expect(new Set(canvas.ctx.images.slice(1)).size).toBe(1);
+
+    // Where a triangle puts a given point of the print. Neighbours that share
+    // that point of the paper must put it in the same place, or the note has a
+    // hole along the join.
+    const at = (m, u, v) => ({ x: m[0] * u + m[2] * v + m[4], y: m[1] * u + m[3] * v + m[5] });
+    const strips = tri.length / 2;
+    const sliceW = fakeArt.width / strips;
+    const texH = fakeArt.height;
+
+    for (let i = 0; i < strips; i++) {
+      const seam = (i + 1) * sliceW;
+      // The two triangles of one strip meet along the diagonal.
+      const d1 = at(tri[i * 2], seam, texH);
+      const d2 = at(tri[i * 2 + 1], seam, texH);
+      expect(d1.x).toBeCloseTo(d2.x, 6);
+      expect(d1.y).toBeCloseTo(d2.y, 6);
+      if (i === strips - 1) continue;
+      // And this strip's far edge is the next strip's near edge, top corner...
+      const a1 = at(tri[i * 2], seam, 0);
+      const b1 = at(tri[(i + 1) * 2], seam, 0);
+      expect(a1.x).toBeCloseTo(b1.x, 6);
+      expect(a1.y).toBeCloseTo(b1.y, 6);
+      // ...and bottom corner, which is the one the old parallelogram implied
+      // rather than projected, and therefore got wrong.
+      const a2 = at(tri[i * 2], seam, texH);
+      const b2 = at(tri[(i + 1) * 2 + 1], seam, texH);
+      expect(a2.x).toBeCloseTo(b2.x, 6);
+      expect(a2.y).toBeCloseTo(b2.y, 6);
+    }
+  });
+
+  test('a contact shadow is masked to the body, never cast on the room', () => {
+    // A shadow exists on a surface or not at all. Stroked straight onto the
+    // frame, the shadow of a note perched on the edge of a shoulder ran off the
+    // body and darkened the background behind it.
+    const canvas = fakeCanvas();
+    const r = renderer(canvas);
+    const stencil = { width: 16, height: 16 };
+    r.draw({
+      video,
+      cam,
+      particles: [bill({ x: 0, y: 0, z: 0 }, { stuck: true, u: 0.5, v2: 0.45, restZ: 1.2, site: 'shoulder' })],
+      personStencil: stencil,
+      personZ: 1.2,
+      shake: { x: 0, y: 0 },
+    });
+    // Nothing is stroked onto the visible frame itself.
+    expect(canvas.ctx.calls.stroke).toBe(0);
+    // The shadow went to its own layer, which was then masked by the stencil
+    // and composited: that layer is a canvas, and the stencil was drawn into it.
+    const layers = canvas.ctx.images.filter((i) => i && typeof i.getContext === 'function');
+    expect(layers.length).toBeGreaterThanOrEqual(2); // person cut-out, shadow layer
   });
 
   test('a note folds further over a tight curve than over a broad one', () => {
