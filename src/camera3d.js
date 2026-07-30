@@ -32,3 +32,24 @@ export function depthFromSpan(cam, meters, pixels) {
 export function viewExtent(cam, z) {
   return { halfW: (cam.width / 2 / cam.f) * z, halfH: (cam.height / 2 / cam.f) * z };
 }
+
+// A hand held up is in front of the body holding it, because the arm is. The
+// depth read off the knuckle span is noisy and the near end of its range is
+// where it is worst, so this is the rule that keeps the muzzle where it must
+// physically be.
+//
+// Getting it wrong is not a small error. A note spawned behind the body is
+// composited out by the person cut-out on the very frame it appears, so the gun
+// fires, the sound plays, and nothing is ever seen. Held out beside your head
+// the money shows up fine; raise the same hand in front of your face and it
+// vanishes, because that is exactly where the silhouette covers the muzzle.
+export const MUZZLE_CLEARANCE = 0.12; // m, the least a hand is in front of you
+export const MIN_MUZZLE_Z = 0.18;     // m, nearer than this and it is in the lens
+
+export function muzzleDepth(raw, personZ, maxZ) {
+  let z = raw;
+  if (!(z > 0) || !isFinite(z)) z = MIN_MUZZLE_Z;
+  if (maxZ) z = Math.min(z, maxZ);
+  if (personZ && isFinite(personZ)) z = Math.min(z, personZ - MUZZLE_CLEARANCE);
+  return Math.max(z, MIN_MUZZLE_Z);
+}

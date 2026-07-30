@@ -5,7 +5,7 @@ import {
   carryStuck, shakeStuck, knockStuck, bindStuckToBody, applyBodyBasis, countStuck,
   releaseStrays,
 } from './physics.js';
-import { createCamera, unproject, depthFromSpan } from './camera3d.js';
+import { createCamera, unproject, depthFromSpan, muzzleDepth } from './camera3d.js';
 import { normalize } from './vec3.js';
 import { createRenderer } from './render.js';
 import { createAudio } from './audio.js';
@@ -38,7 +38,6 @@ const KNUCKLE_SPAN_M = 0.08;
 // A hand naturally sits about 0.4 m from a webcam, where a note would render a
 // third of the frame wide. Treating anything nearer as this far keeps notes a
 // legible size without moving where they leave the fingertip on screen.
-const MIN_MUZZLE_Z = 0.7;
 const MAX_MUZZLE_Z = 4;
 // Adult biacromial breadth. How wide your shoulders appear is the one reliable
 // measure of how far away YOU are, and it is available whenever the body is
@@ -315,7 +314,8 @@ function resolveHand(i, w, h, ts, dt) {
   track.dy = smooth(track.dy, dirRaw.y, dt, 0.07);
   track.dz = smooth(track.dz, dirRaw.z, dt, 0.07);
 
-  const z = Math.min(Math.max(track.z, MIN_MUZZLE_Z), MAX_MUZZLE_Z);
+  // The muzzle can never sit behind the person, whatever the span said.
+  const z = muzzleDepth(track.z, body.present ? personZ : null, MAX_MUZZLE_Z);
   const tip3 = unproject(cam, track.tx, track.ty, z);
   const dir = normalize({ x: track.dx, y: track.dy, z: track.dz });
 
@@ -410,7 +410,10 @@ function loop(ts) {
         + `  thumbGap:${hand.thumbGap.toFixed(2)} (need 0.70)`
         + `  hammer:${r.thumbUp ? 'UP' : 'down'}`
         + `  firing:${r.firing ? 'yes' : 'no'}`
-        + `  hand:${z.toFixed(2)}m`
+        // Money leaving a muzzle deeper than you is drawn behind you and is
+        // never seen, so these two numbers together are what separate "the
+        // gesture was not read" from "it fired and you could not see it".
+        + `  muzzle:${z.toFixed(2)}m ${z < personZ ? '<' : '>='} you:${personZ.toFixed(2)}m`
       );
     }
   }
