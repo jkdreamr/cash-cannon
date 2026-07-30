@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'vitest';
-import { createCamera, project, unproject, depthFromSpan, viewExtent } from '../src/camera3d.js';
+import {
+  createCamera, project, unproject, depthFromSpan, viewExtent,
+  muzzleDepth, MIN_MUZZLE_Z, MUZZLE_CLEARANCE,
+} from '../src/camera3d.js';
 
 const cam = createCamera(1280, 720);
 
@@ -50,5 +53,54 @@ describe('pinhole camera', () => {
 
   test('the view is wider further away', () => {
     expect(viewExtent(cam, 4).halfW).toBeGreaterThan(viewExtent(cam, 1).halfW);
+  });
+});
+
+describe('where the muzzle sits', () => {
+  test('a hand raised in front of your face still fires in front of you', () => {
+    // The reported bug: hold the finger gun out beside your head and money
+    // appears, raise it in front of your face and nothing does.
+    //
+    // Nothing was wrong with the gesture. In a close selfie your shoulders fill
+    // the frame, which puts you about 0.45 m from the lens, while a fixed 0.7 m
+    // floor on the muzzle put the money a quarter of a metre BEHIND you. Notes
+    // spawned back there are painted over by the person cut-out on the very
+    // frame they appear, so the gun fires, the sound plays, and nothing is ever
+    // seen. Beside your head the same notes clear the silhouette and show up
+    // fine, which is exactly the difference the report describes.
+    const personZ = 0.45;
+    const z = muzzleDepth(0.35, personZ, 4);
+    expect(z).toBeLessThan(personZ);
+    // And clear of it by a real margin, not by a rounding error.
+    expect(personZ - z).toBeGreaterThanOrEqual(MUZZLE_CLEARANCE - 1e-9);
+  });
+
+  test('a bad depth reading cannot push the muzzle behind you either', () => {
+    // The knuckle span is noisiest at close range, which is precisely where
+    // this matters, so the rule has to hold for a reading that is simply wrong.
+    for (const raw of [0.9, 2.5, 4, 0, -1, NaN, Infinity]) {
+      const z = muzzleDepth(raw, 0.5, 4);
+      expect(z).toBeLessThan(0.5);
+      expect(z).toBeGreaterThanOrEqual(MIN_MUZZLE_Z);
+    }
+  });
+
+  test('standing back, the muzzle is left where the hand actually is', () => {
+    // At a normal distance the hand reading is good and must not be dragged
+    // toward the body: money has to leave the fingertip, not the chest.
+    expect(muzzleDepth(1.1, 1.6, 4)).toBeCloseTo(1.1, 6);
+    expect(muzzleDepth(0.8, 2.4, 4)).toBeCloseTo(0.8, 6);
+  });
+
+  test('with no body tracked the hand reading is trusted as it stands', () => {
+    expect(muzzleDepth(0.35, null, 4)).toBeCloseTo(0.35, 6);
+    expect(muzzleDepth(9, null, 4)).toBeCloseTo(4, 6);
+  });
+
+  test('the muzzle never ends up inside the lens', () => {
+    // Someone leaning right into the camera would otherwise drive it negative,
+    // where the note is behind the viewer and is culled.
+    expect(muzzleDepth(0.1, 0.2, 4)).toBeGreaterThanOrEqual(MIN_MUZZLE_Z);
+    expect(muzzleDepth(0.25, 0.05, 4)).toBeGreaterThanOrEqual(MIN_MUZZLE_Z);
   });
 });
